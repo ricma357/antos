@@ -21,7 +21,13 @@ Antos — an event-driven quantitative backtesting platform with a FastAPI REST 
 # CLI backtest / multi-strategy comparison (charts saved to data/)
 .venv/bin/python run_backtest.py
 .venv/bin/python compare_strategies.py
+
+# Validate a strategy change vs buy-and-hold (the referee — run on BOTH periods)
+.venv/bin/python validate_strategy.py
+.venv/bin/python validate_strategy.py --crisis
 ```
+
+Baseline numbers to beat: `doc/validation_baseline.md`.
 
 CI: GitHub Actions runs pytest on Python 3.10 and 3.12 on every push/PR to `main`.
 

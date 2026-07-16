@@ -18,18 +18,23 @@ class HistoricalCSVDataProvider:
 
     REQUIRED_COLUMNS = {'Date', 'Open', 'High', 'Low', 'Close', 'Volume'}
 
-    def __init__(self, data_dir: str, symbols: List[str]):
+    def __init__(self, data_dir: str, symbols: List[str],
+                 start_date: str = None, end_date: str = None):
         """
         Args:
             data_dir (str): Folder containing the CSV files.
             symbols (List[str]): List of instrument tickers to parse.
-        
+            start_date: Optional inclusive lower bound (ISO string or datetime).
+            end_date: Optional inclusive upper bound (ISO string or datetime).
+
         Raises:
             FileNotFoundError: If a CSV for any symbol is missing.
             ValueError: If the CSV schema is invalid or data is empty.
         """
         self.data_dir = data_dir
         self.symbols = symbols
+        self.start_date = pd.to_datetime(start_date) if start_date is not None else None
+        self.end_date = pd.to_datetime(end_date) if end_date is not None else None
         self._event_stream: List[MarketEvent] = []
         self._load_and_chronologize()
 
@@ -63,6 +68,13 @@ class HistoricalCSVDataProvider:
 
             df['Date'] = pd.to_datetime(df['Date'])
             df = df.sort_values('Date')
+
+            # Optional date-range filtering (used by the validation harness
+            # to evaluate strategies on out-of-sample time slices)
+            if self.start_date is not None:
+                df = df[df['Date'] >= self.start_date]
+            if self.end_date is not None:
+                df = df[df['Date'] <= self.end_date]
 
             # Drop rows with NaN in critical price columns
             price_cols = ['Open', 'High', 'Low', 'Close', 'Volume']

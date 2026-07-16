@@ -102,8 +102,11 @@ class BacktestEngine:
         strategy: BaseStrategy,
         execution_handler: BaseExecutionHandler,
         risk_free_rate: float = 0.0,
+        start_date: str = None,
+        end_date: str = None,
     ):
-        self.data_provider    = HistoricalCSVDataProvider(data_dir, symbols)
+        self.data_provider    = HistoricalCSVDataProvider(
+            data_dir, symbols, start_date=start_date, end_date=end_date)
         self.strategy         = strategy
         self.execution_handler = execution_handler
         self.portfolio        = Portfolio(initial_cash)

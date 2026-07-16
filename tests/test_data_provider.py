@@ -68,6 +68,22 @@ class TestHistoricalCSVDataProvider(unittest.TestCase):
         event = next(provider.stream_events())
         self.assertEqual(event.close_price, 95.0)
 
+    def test_date_range_filtering(self):
+        write_csv(self.data_dir, "SPY", [
+            "2024-01-02,100,101,99,100.5,1000",
+            "2024-01-03,101,102,100,101.5,1000",
+            "2024-01-04,102,103,101,102.5,1000",
+            "2024-01-05,103,104,102,103.5,1000",
+        ])
+        provider = HistoricalCSVDataProvider(
+            self.data_dir, ["SPY"],
+            start_date="2024-01-03", end_date="2024-01-04",
+        )
+        events = list(provider.stream_events())
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].open_price, 101.0)
+        self.assertEqual(events[-1].open_price, 102.0)
+
     def test_empty_data_raises(self):
         write_csv(self.data_dir, "SPY", [])
         with self.assertRaises(ValueError):
