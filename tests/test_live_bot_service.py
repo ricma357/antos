@@ -157,6 +157,35 @@ class TestTick(LiveBotServiceTestCase):
         self.assertFalse(result["active"])
 
 
+class TestFairShareSizing(LiveBotServiceTestCase):
+    def test_all_symbols_get_capital(self):
+        # 3 symbols, strength 0.5 each = 150% NAV demanded. The fair-share
+        # cap (NAV/3) must let all three open positions instead of the
+        # alphabetically-first symbols starving the rest.
+        from datetime import datetime
+        symbols = ["AAPL", "MSFT", "SPY"]
+        for sym in symbols:
+            write_bars(self.data_dir, sym)
+        live_bars = [MarketEvent(
+            timestamp=datetime(2024, 2, 1), symbol=sym,
+            open_price=100.0, high_price=101.0, low_price=99.0,
+            close_price=100.0, volume=1_000_000,
+        ) for sym in symbols]
+        with patch("src.live_bot.LiveDataProvider") as MockProvider:
+            MockProvider.return_value.get_latest_bars.return_value = live_bars
+            self.service.start(strategy_id="test", symbols=symbols,
+                               initial_cash=30_000.0, live_mode=True)
+            state = self.service.tick()
+        queued = {o["symbol"]: o for o in state["pending_orders"]}
+        self.assertEqual(set(queued), set(symbols))
+        for sym, order in queued.items():
+            notional = order["quantity"] * 100.0
+            self.assertLessEqual(notional, 10_000.0,
+                                 f"{sym} exceeds its NAV/3 budget")
+            self.assertGreater(notional, 9_000.0,
+                               f"{sym} was starved ({notional})")
+
+
 class TestSameBarIdempotency(LiveBotServiceTestCase):
     """Live mode delivers the same daily candle on every scheduler tick
     (open, close, catch-ups). Signals must be evaluated once per bar."""

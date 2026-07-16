@@ -66,6 +66,36 @@ baseline. Shipped as the constructor default; the live bot picks it up
 via registry defaults. Set `vol_threshold_k=0` to recover the old
 fixed-threshold behavior.
 
+### Fair-share allocation cap (2026-07-17) — `fair_allocation=True`
+
+Per-symbol target allocation is now capped at NAV/n_symbols (engine and
+live bot). Previously sizing was first-come-first-served: event ties
+sort **alphabetically by symbol**, so whichever symbol sorts first
+grabbed up to `strength` × NAV and later symbols starved (the live
+6-symbol bot ran with $230 free cash and two symbols permanently
+starved).
+
+| Metric | Uncapped | Fair-share | Verdict |
+|--------|----------|------------|---------|
+| Bull FULL (2 symbols) | +295.29% | +295.29% (bit-identical) | ✓ no-op as designed |
+| Crisis FULL return | +77.49% | +44.93% | see note |
+| Crisis FULL max DD | −16.28% | **−11.63%** | ✓ |
+| Crisis 2008 return | −2.54% | **−1.53%** | ✓ |
+| Crisis FULL Sharpe | 0.695 | 0.579 (still > B&H 0.545) | see note |
+
+**Note on the crisis give-back:** the uncapped +77% was partly
+*alphabetical luck*: GLD — alphabetically first among GLD/JPM/SPY and
+the best-performing crisis asset — systematically won the
+first-come-first-served capital race and got 50% NAV concentration.
+That concentration would have amplified losses just as readily had the
+best asset sorted last. Fair allocation trades that lottery for
+deterministic risk control; the capped numbers are the honest baseline
+going forward.
+
+Inverse-volatility weighting (risk parity) was scoped out for now:
+with ~50% hit rates, sizing refinements can't add much until entry
+quality improves; revisit after #17/#18.
+
 ## Falsified experiments
 
 ### Feature standardization + unpenalized intercept (2026-07-16)

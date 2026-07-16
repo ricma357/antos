@@ -18,19 +18,31 @@ class Portfolio:
     - Supports Long and Short positions (negative inventory for shorts).
     """
 
-    def __init__(self, initial_cash: float = 100_000.0):
+    def __init__(self, initial_cash: float = 100_000.0,
+                 max_allocation_per_symbol: Optional[float] = None):
         """
         Args:
             initial_cash (float): Seed capital to start the simulation.
-        
+            max_allocation_per_symbol: Optional cap on the NAV fraction any
+                single symbol may target (e.g. 1/n_symbols for fair-share
+                budgeting). Without it, sizing is first-come-first-served:
+                when strategies request more total allocation than 100% of
+                NAV, whichever symbol signals first (event order is
+                alphabetical on ties!) takes the capital and later symbols
+                starve. None = uncapped (legacy behavior).
+
         Raises:
             ValueError: If initial_cash is not positive.
         """
         if initial_cash <= 0:
             raise ValueError(f"initial_cash must be positive, got {initial_cash}")
+        if max_allocation_per_symbol is not None and not 0.0 < max_allocation_per_symbol <= 1.0:
+            raise ValueError(
+                f"max_allocation_per_symbol must be in (0, 1], got {max_allocation_per_symbol}")
 
         self.initial_cash = initial_cash
         self.cash = initial_cash
+        self.max_allocation_per_symbol = max_allocation_per_symbol
 
         # Maps symbol to current share count. Positive = Long, Negative = Short.
         self.positions: Dict[str, int] = {}
@@ -144,7 +156,10 @@ class Portfolio:
 
         # ── NAV-based target notional ──────────────────────────────────
         nav = self._total_nav()
-        target_notional = nav * signal.strength          # e.g. $100k * 0.20 = $20k
+        effective_strength = signal.strength
+        if self.max_allocation_per_symbol is not None:
+            effective_strength = min(effective_strength, self.max_allocation_per_symbol)
+        target_notional = nav * effective_strength       # e.g. $100k * 0.20 = $20k
         target_qty = int(target_notional // latest_price)
 
         # ── LONG signal ────────────────────────────────────────────────

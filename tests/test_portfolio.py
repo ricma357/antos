@@ -168,6 +168,49 @@ class TestGenerateOrderShortAndExit(unittest.TestCase):
         self.assertEqual(order.quantity, 300 + 200)
 
 
+class TestFairShareCap(unittest.TestCase):
+    def setUp(self):
+        self.p = Portfolio(initial_cash=120_000.0, max_allocation_per_symbol=1.0 / 6)
+        self.p.update_market_price(make_bar(close=100.0))
+
+    def test_target_capped_at_fair_share(self):
+        # strength 0.5 requests 50% NAV, but the cap limits it to NAV/6 = $20k
+        order = self.p.generate_order(make_signal(strength=0.5))
+        self.assertEqual(order.quantity, 200)  # 20_000 / 100
+
+    def test_strength_below_cap_unaffected(self):
+        order = self.p.generate_order(make_signal(strength=0.1))
+        self.assertEqual(order.quantity, 120)  # 12_000 / 100
+
+    def test_no_cap_is_legacy_behavior(self):
+        p = Portfolio(initial_cash=120_000.0)
+        p.update_market_price(make_bar(close=100.0))
+        order = p.generate_order(make_signal(strength=0.5))
+        self.assertEqual(order.quantity, 600)  # full 50% NAV
+
+    def test_invalid_cap_raises(self):
+        with self.assertRaises(ValueError):
+            Portfolio(initial_cash=100_000.0, max_allocation_per_symbol=0.0)
+        with self.assertRaises(ValueError):
+            Portfolio(initial_cash=100_000.0, max_allocation_per_symbol=1.5)
+
+    def test_six_symbols_all_get_capital(self):
+        # With the cap, six simultaneous LONG signals each get NAV/6 —
+        # previously the first two ate everything and four starved.
+        symbols = ["AAPL", "AMZN", "JPM", "MSFT", "NVDA", "SPY"]
+        for sym in symbols:
+            self.p.update_market_price(make_bar(symbol=sym, close=100.0))
+        quantities = {}
+        for sym in symbols:
+            order = self.p.generate_order(make_signal(symbol=sym, strength=0.5))
+            self.assertIsNotNone(order, f"{sym} was starved of capital")
+            quantities[sym] = order.quantity
+            self.p.update_fill(make_fill(symbol=sym, qty=order.quantity,
+                                         direction="BUY", price=100.0, commission=0.0))
+        self.assertEqual(set(quantities.values()), {200},
+                         "every symbol gets an equal fair share")
+
+
 class TestUpdateFill(unittest.TestCase):
     def setUp(self):
         self.p = Portfolio(initial_cash=100_000.0)

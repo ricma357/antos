@@ -104,12 +104,21 @@ class BacktestEngine:
         risk_free_rate: float = 0.0,
         start_date: str = None,
         end_date: str = None,
+        fair_allocation: bool = True,
     ):
+        """
+        fair_allocation: cap each symbol's target allocation at NAV/n_symbols
+        so multi-asset portfolios can't over-subscribe capital on a
+        first-come-first-served basis (event ties break alphabetically, so
+        uncapped sizing systematically favors alphabetically-early symbols).
+        Set False for the legacy uncapped behavior.
+        """
         self.data_provider    = HistoricalCSVDataProvider(
             data_dir, symbols, start_date=start_date, end_date=end_date)
         self.strategy         = strategy
         self.execution_handler = execution_handler
-        self.portfolio        = Portfolio(initial_cash)
+        max_alloc = (1.0 / len(symbols)) if (fair_allocation and symbols) else None
+        self.portfolio        = Portfolio(initial_cash, max_allocation_per_symbol=max_alloc)
         self.risk_free_rate   = risk_free_rate
 
     # ------------------------------------------------------------------

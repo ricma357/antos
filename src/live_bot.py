@@ -603,9 +603,14 @@ class LiveBotService:
         else:
             pending_symbols = {o.symbol for o in broker.pending_orders}
 
+        # Fair-share cap: no symbol may target more than NAV/n_symbols,
+        # so a 6-symbol portfolio can't be starved by whichever symbols
+        # signal first (event order is alphabetical on ties).
+        max_alloc = 1.0 / len(symbols) if symbols else 1.0
+
         # Convert signals to orders
         for signal in new_signals:
-            strength = signal.strength
+            strength = min(signal.strength, max_alloc)
             symbol = signal.symbol
             close_price = close_prices.get(symbol, 0.0)
             if close_price <= 0:
