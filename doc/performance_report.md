@@ -1,9 +1,17 @@
 # Performance Report: Multi-Period Strategy Backtest
 
-**Generated:** June 2026
+**Generated:** June 2026 · **Revised:** July 2026 (see revision section below)
 **Engine:** Antos Event-Driven Backtester
 **Initial Capital:** $100,000 per test
 **Commission:** 0.1% per transaction | **Slippage:** 0.05%
+
+> ⚠️ **July 2026 revision note:** the tables below were produced with the
+> legacy first-come-first-served capital allocator and the original
+> fixed-threshold Ridge model. Both have since changed (see the revision
+> section at the end and `doc/validation_baseline.md` for the full
+> experiment log). Headline Ridge numbers under the shipped July 2026
+> configuration: **Bull +295.3% / max DD −20.4% / 110 trades** and
+> **Crisis +44.9% / max DD −11.6% / Sharpe 0.579 (vs B&H 0.545)**.
 
 ---
 
@@ -105,6 +113,42 @@ This captured 71% of the drawdown reduction (from -57% to -16%) with zero comple
 | Maximum crash protection | SMA Crossover (50/200) | Lowest crisis drawdown (-10.59%) |
 | Sideways / range-bound markets | RSI Mean Reversion | Designed for oscillating markets, lowest bull drawdown (-7.08%) |
 | Breakout-driven markets | Volatility Squeeze | Captures explosive moves after low-volatility compression |
+
+---
+
+## July 2026 Revision: The Improvement Program
+
+A validation-first improvement pass was run against the Ridge ML
+strategy (the live bot's strategy). Every change was tuned only on a
+2020–2023 train window and judged out-of-sample on 2024–2026 and
+2006–2012 against a buy-and-hold benchmark (`validate_strategy.py`).
+Full experiment log with tables: `doc/validation_baseline.md`.
+
+### Shipped
+
+| Change | Effect |
+|--------|--------|
+| **Volatility-scaled entry threshold** (`vol_threshold_k=0.15`) | Entries require conviction proportional to trailing 20-bar vol. Bull: +295% vs +269% with **half the trades** (110 vs 222). Crisis 2008: −2.5% vs −9.1%. The single biggest win. |
+| **Fair-share allocation cap** (NAV/n per symbol) | Removes first-come-first-served sizing that alphabetically favored early symbols and starved the rest (the live 6-symbol bot ran at $230 free cash). Crisis DD improves to −11.6%; exposed that the prior crisis outperformance was partly "GLD sorts first" luck. |
+| **Live guardrails** | Drawdown circuit breaker (default 15%, halts new entries, exits allowed) + per-symbol rolling hit-rate kill switch (<45% over 20 calls). |
+| **Once-per-bar signal evaluation** | Fixed duplicate-order churn from multiple daily scheduler ticks re-evaluating the same candle. |
+| **Warmup fast path** | Live tick pre-warm: 15.7s → 3ms (one model fit per tick instead of ~9,500). |
+
+### Falsified (tried, measured, rejected)
+
+| Experiment | Why it failed |
+|-----------|---------------|
+| Feature standardization + unpenalized intercept (textbook ridge fix) | Crisis flipped +28% → −22%. Hit rates are ~50% everywhere; the model's real edge is over-shrinkage acting as a high-conviction trend filter, which the intercept destroyed. |
+| Regime hysteresis (SMA dead band) | OOS the crisis got worse (delayed bear exits cost more than saved whipsaw); vol-scaled threshold already suppresses crossing churn. |
+
+### Honest bottom line
+
+The Ridge strategy is a **risk-reduction** strategy, not a
+return-maximization one: it lags buy-and-hold in raw return in both
+periods but wins on drawdown everywhere and on Sharpe in both periods
+under the shipped configuration. Its directional accuracy is ~50%; its
+value comes from trading rarely, with conviction, inside a trend
+regime — and from stepping aside in bear markets.
 
 ---
 
