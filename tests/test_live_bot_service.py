@@ -238,6 +238,75 @@ class TestSameBarIdempotency(LiveBotServiceTestCase):
             self.assertEqual(state["last_signal_date"], "2024-02-02")
 
 
+class LowAccuracyStrategy(BaseStrategy):
+    """Always signals LONG and reports a failing rolling hit rate."""
+
+    def calculate_signals(self, event: MarketEvent, current_qty: int) -> List[SignalEvent]:
+        if current_qty == 0:
+            return [SignalEvent(symbol=event.symbol, timestamp=event.timestamp,
+                                signal_type="LONG", strength=0.5)]
+        return []
+
+    def get_hit_rate(self, symbol, window=None):
+        return 0.30  # well below the 45% floor
+
+
+class TestGuardrails(LiveBotServiceTestCase):
+    def test_drawdown_breaker_blocks_new_entries(self):
+        self._start()  # initial_cash 100k
+        # Force a >15% drawdown: pretend the portfolio once peaked at $130k.
+        state = self.service.status()
+        state["peak_equity"] = 130_000.0
+        self.service.save_state(state)
+
+        state = self.service.tick()
+        self.assertTrue(state["guardrails"]["drawdown_halted"])
+        self.assertEqual(state["pending_orders"], [],
+                         "no new entries while the breaker is tripped")
+
+    def test_drawdown_breaker_disabled_with_zero_limit(self):
+        self._start(drawdown_halt=0.0)
+        state = self.service.status()
+        state["peak_equity"] = 130_000.0
+        self.service.save_state(state)
+
+        state = self.service.tick()
+        self.assertFalse(state["guardrails"]["drawdown_halted"])
+        self.assertEqual(len(state["pending_orders"]), 1)
+
+    def test_hit_rate_kill_switch_blocks_symbol(self):
+        self.strategy_cls = LowAccuracyStrategy
+        self._start()
+        state = self.service.tick()
+        self.assertIn("SPY", state["guardrails"]["hit_rate_blocked"])
+        self.assertEqual(state["pending_orders"], [],
+                         "LONG suppressed for hit-rate-blocked symbol")
+
+    def test_healthy_bot_trips_no_guardrails(self):
+        self._start()
+        state = self.service.tick()
+        self.assertFalse(state["guardrails"]["drawdown_halted"])
+        self.assertEqual(state["guardrails"]["hit_rate_blocked"], [])
+        self.assertEqual(len(state["pending_orders"]), 1)
+
+    def test_diagnostics_persist_across_ticks(self):
+        recorded = {}
+
+        class DiagStrategy(AlwaysLongStrategy):
+            def restore_diagnostics(self, diagnostics):
+                recorded["restored"] = diagnostics
+
+            def export_diagnostics(self):
+                return {"marker": 42}
+
+        self.strategy_cls = DiagStrategy
+        self._start()
+        state = self.service.tick()
+        self.assertEqual(state["strategy_diagnostics"], {"marker": 42})
+        self.service.tick()  # second tick must restore what the first exported
+        self.assertEqual(recorded["restored"], {"marker": 42})
+
+
 class TestCalculateMetrics(unittest.TestCase):
     def test_metrics_from_equity_curve(self):
         state = {

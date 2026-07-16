@@ -44,6 +44,9 @@ class StartBotRequest(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict)
     live_mode: bool = Field(default=False)
     broker_type: str = Field(default="simulated")
+    drawdown_halt: float = Field(
+        default=0.15, ge=0, lt=1,
+        description="Halt new entries beyond this portfolio drawdown (0 disables)")
 
 
 def _http_status(err: BotError) -> int:
@@ -76,6 +79,7 @@ def start_bot(req: StartBotRequest):
             params=req.params,
             live_mode=req.live_mode,
             broker_type=req.broker_type,
+            drawdown_halt=req.drawdown_halt,
         )
     except BotError as e:
         raise HTTPException(status_code=_http_status(e), detail=str(e))

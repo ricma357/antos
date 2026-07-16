@@ -73,6 +73,11 @@ class LiveBotService:
             Injected so this module never imports from the API layer.
     """
 
+    # Guardrail defaults
+    HIT_RATE_WINDOW = 20   # rolling directional calls considered
+    HIT_RATE_FLOOR = 0.45  # block new entries below this accuracy
+    DEFAULT_DRAWDOWN_HALT = 0.15  # block new entries beyond this drawdown
+
     def __init__(self, data_dir: str, state_file: str,
                  strategy_factory: Callable[[str, Dict[str, Any]], Any]):
         self.data_dir = data_dir
@@ -168,6 +173,7 @@ class LiveBotService:
         params: Optional[Dict[str, Any]] = None,
         live_mode: bool = False,
         broker_type: str = "simulated",
+        drawdown_halt: float = DEFAULT_DRAWDOWN_HALT,
     ) -> Dict[str, Any]:
         params = params or {}
         state = self.load_state()
@@ -221,6 +227,8 @@ class LiveBotService:
         state["peak_equity"] = initial_cash
         state["live_mode"] = live_mode
         state["broker_type"] = broker_type
+        state["drawdown_halt"] = drawdown_halt
+        state["strategy_diagnostics"] = {}
         state["metrics"] = {
             "total_return_pct": 0.0,
             "ann_return_pct": 0.0,
@@ -566,11 +574,17 @@ class LiveBotService:
         for event in day_events:
             close_prices[event.symbol] = event.close_price
 
+        hit_rate_blocked: List[str] = []
         if not already_evaluated:
             # Reconstruct strategy internal history to produce correct current signals
             strategy_id = state.get("strategy_id", "")
             params = state.get("params", {})
             strategy = self.strategy_factory(strategy_id, params)
+
+            # Restore prediction diagnostics persisted across ticks (the
+            # strategy instance is rebuilt every evaluation, so hit-rate
+            # history lives in the state file).
+            strategy.restore_diagnostics(state.get("strategy_diagnostics", {}))
 
             # Feed history sequentially to pre-warm indicators via the
             # state-only fast path (no model fitting on historical bars —
@@ -589,6 +603,24 @@ class LiveBotService:
                 new_signals.extend(signals)
 
             state["last_signal_date"] = date_str
+            state["strategy_diagnostics"] = strategy.export_diagnostics()
+
+            # ── Guardrail: rolling hit-rate kill switch ─────────────────
+            # If the model's recent directional accuracy on a symbol is
+            # materially worse than a coin flip, stop opening new positions
+            # in it (exits stay allowed) until accuracy recovers.
+            get_hit_rate = getattr(strategy, "get_hit_rate", None)
+            if get_hit_rate is not None:
+                for sym in symbols:
+                    rate = get_hit_rate(sym, window=self.HIT_RATE_WINDOW)
+                    if rate is not None and rate < self.HIT_RATE_FLOOR:
+                        hit_rate_blocked.append(sym)
+                if hit_rate_blocked:
+                    msg = (f"🛑 Hit-rate kill switch: blocking new entries in "
+                           f"{', '.join(hit_rate_blocked)} (rolling accuracy < "
+                           f"{self.HIT_RATE_FLOOR:.0%} over last {self.HIT_RATE_WINDOW} calls).")
+                    logger.warning(msg)
+                    notifier.notify(msg)
 
         # Sizing logic & queue new OrderEvents
         # Calculate today's NAV
@@ -608,6 +640,26 @@ class LiveBotService:
         # signal first (event order is alphabetical on ties).
         max_alloc = 1.0 / len(symbols) if symbols else 1.0
 
+        # ── Guardrail: drawdown circuit breaker ────────────────────────
+        # Beyond the configured drawdown, stop opening new positions;
+        # exits remain allowed so the book can still de-risk.
+        peak_equity = max(state.get("peak_equity", nav), nav)
+        drawdown = (nav - peak_equity) / peak_equity if peak_equity > 0 else 0.0
+        drawdown_halt_limit = state.get("drawdown_halt", self.DEFAULT_DRAWDOWN_HALT)
+        drawdown_halted = bool(drawdown_halt_limit) and drawdown <= -drawdown_halt_limit
+        if drawdown_halted:
+            msg = (f"🛑 Drawdown circuit breaker: {drawdown * 100:.1f}% exceeds the "
+                   f"{drawdown_halt_limit * 100:.0f}% limit — new entries halted, exits allowed.")
+            logger.warning(msg)
+            notifier.notify(msg)
+
+        state["guardrails"] = {
+            "drawdown_halted": drawdown_halted,
+            "drawdown_pct": round(drawdown * 100, 2),
+            "drawdown_halt_limit_pct": round(drawdown_halt_limit * 100, 2),
+            "hit_rate_blocked": hit_rate_blocked,
+        }
+
         # Convert signals to orders
         for signal in new_signals:
             strength = min(signal.strength, max_alloc)
@@ -617,6 +669,10 @@ class LiveBotService:
                 continue
             if symbol in pending_symbols:
                 logger.warning(f"Skipping {signal.signal_type} signal for {symbol}: order already pending.")
+                continue
+            if signal.signal_type == "LONG" and (drawdown_halted or symbol in hit_rate_blocked):
+                reason = "drawdown circuit breaker" if drawdown_halted else "hit-rate kill switch"
+                logger.warning(f"Guardrail: suppressing LONG entry for {symbol} ({reason}).")
                 continue
 
             current_qty = positions.get(symbol, {}).get("qty", 0)
@@ -664,10 +720,8 @@ class LiveBotService:
                     f"Type: MKT"
                 )
 
-        # Calculate equity curve entry
-        peak_equity = max(state.get("peak_equity", nav), nav)
-        drawdown = (nav - peak_equity) / peak_equity if peak_equity > 0 else 0.0
-
+        # Calculate equity curve entry (peak_equity/drawdown computed above
+        # for the circuit breaker)
         prev_max_dd = min((pt.get("drawdown", 0.0) for pt in state.get("equity_curve", [])), default=0.0)
         if drawdown < -0.10 and drawdown < prev_max_dd:
             notifier.notify(
@@ -829,6 +883,19 @@ def generate_insights(state: Dict[str, Any], current_date: str,
         insights.append(f"Portfolio drawdown is currently at a moderate {abs(current_dd):.1f}%.")
     else:
         insights.append(f"📈 Portfolio is at an all-time equity high. Risk parameters are fully nominal.")
+
+    # 2b. Active guardrails
+    guardrails = state.get("guardrails", {})
+    if guardrails.get("drawdown_halted"):
+        insights.append(
+            f"🛑 GUARDRAIL: Drawdown circuit breaker is ACTIVE "
+            f"({guardrails.get('drawdown_pct', 0.0):.1f}% vs "
+            f"{guardrails.get('drawdown_halt_limit_pct', 0.0):.0f}% limit). "
+            f"New entries are halted; exits remain enabled.")
+    if guardrails.get("hit_rate_blocked"):
+        insights.append(
+            f"🛑 GUARDRAIL: Hit-rate kill switch blocking new entries in "
+            f"{', '.join(guardrails['hit_rate_blocked'])} until rolling accuracy recovers.")
 
     # 3. Position summary
     active_positions = {sym: pos for sym, pos in positions.items() if pos.get("qty", 0) > 0}

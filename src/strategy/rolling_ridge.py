@@ -207,6 +207,23 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         """
         self._append_bar(event)
 
+    def export_diagnostics(self) -> dict:
+        """Serializes prediction-tracking state for cross-tick persistence."""
+        return {
+            "last_prediction": dict(self._last_prediction),
+            "hit_history": {sym: list(hits) for sym, hits in self._hit_history.items()},
+        }
+
+    def restore_diagnostics(self, diagnostics: dict) -> None:
+        """Restores prediction-tracking state saved by export_diagnostics."""
+        if not diagnostics:
+            return
+        self._last_prediction = dict(diagnostics.get("last_prediction", {}))
+        self._hit_history = {
+            sym: [bool(h) for h in hits]
+            for sym, hits in diagnostics.get("hit_history", {}).items()
+        }
+
     def get_hit_rate(self, symbol: str, window: int = None) -> float:
         """
         Fraction of resolved directional calls that got the sign right.

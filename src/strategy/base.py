@@ -37,3 +37,15 @@ class BaseStrategy(ABC):
         so behavior is identical for strategies that don't override it.
         """
         self.calculate_signals(event, current_qty)
+
+    def export_diagnostics(self) -> dict:
+        """
+        Returns JSON-serializable diagnostic state (e.g. prediction hit
+        history) so live systems that rebuild the strategy each tick can
+        persist it across process/instance boundaries. Default: nothing.
+        """
+        return {}
+
+    def restore_diagnostics(self, diagnostics: dict) -> None:
+        """Restores state previously produced by export_diagnostics."""
+        pass
