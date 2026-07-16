@@ -98,7 +98,6 @@ class HistoricalCSVDataProvider:
         # non-deterministic processing order when multiple assets share the same timestamp
         self._event_stream = sorted(all_events, key=lambda x: (x.timestamp, x.symbol))
         logger.info(f"Ingested {len(self._event_stream)} daily bars across {len(self.symbols)} instruments.")
-        print(f"Ingested {len(self._event_stream)} daily bars across {len(self.symbols)} instruments.")
 
     def stream_events(self) -> Generator[MarketEvent, None, None]:
         """

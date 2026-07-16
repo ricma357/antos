@@ -12,11 +12,16 @@ Output (saved to /data/):
 """
 
 import os
+import logging
 from typing import List
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.colors as mcolors
+
+# Show engine output on the console. Use level=logging.DEBUG to also
+# see every individual fill.
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 from src.engine import BacktestEngine, BacktestResult
 from src.strategy.sma_crossover import SMACrossover

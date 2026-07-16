@@ -299,14 +299,13 @@ class Portfolio:
             'nav_after':      self._total_nav(),
         })
 
-        pos = self.positions[symbol]
-        nav = self._total_nav()
-        print(
-            f"  [{fill.timestamp.strftime('%Y-%m-%d')}] "
-            f"{fill.direction} {qty:>5} {symbol:<8} "
-            f"@ ${fill_price:>10,.2f}  "
-            f"Fee: ${commission:>7.2f}  "
-            f"Cash: ${self.cash:>12,.2f}  "
-            f"Pos: {pos:>+5}  "
-            f"NAV: ${nav:>12,.2f}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"  [{fill.timestamp.strftime('%Y-%m-%d')}] "
+                f"{fill.direction} {qty:>5} {symbol:<8} "
+                f"@ ${fill_price:>10,.2f}  "
+                f"Fee: ${commission:>7.2f}  "
+                f"Cash: ${self.cash:>12,.2f}  "
+                f"Pos: {self.positions[symbol]:>+5}  "
+                f"NAV: ${self._total_nav():>12,.2f}"
+            )

@@ -117,8 +117,7 @@ class BacktestEngine:
         """
         Runs the event loop and returns a structured BacktestResult.
         """
-        print(f"\nRunning: {strategy_name}")
-        print("-" * 50)
+        logger.info(f"Running: {strategy_name}")
 
         for market_bar in self.data_provider.stream_events():
             # 1. Fill yesterday's pending orders at today's Open
@@ -138,7 +137,7 @@ class BacktestEngine:
                 if order:
                     self.execution_handler.queue_order(order)
 
-        print(f"  {len(self.portfolio.trade_log)} trades executed.")
+        logger.info(f"  {len(self.portfolio.trade_log)} trades executed.")
         return self._build_result(strategy_name)
 
     # ------------------------------------------------------------------
@@ -230,24 +229,28 @@ class BacktestEngine:
         }
 
         w = 58
-        print("\n" + "=" * w)
-        print(f"  Strategy: {strategy_name}")
-        print("=" * w)
-        print(f"  Initial Balance:       ${initial_val:>12,.2f}")
-        print(f"  Ending Balance:        ${final_val:>12,.2f}")
-        print(f"  Cumulative Return:     {total_ret:>+12.2f}%")
-        print(f"  Annualized Return:     {ann_ret:>+12.2f}%")
-        print(f"  Maximum Drawdown:      {max_drawdown:>12.2f}%")
-        print(f"  Sharpe Ratio  (Ann.):  {sharpe:>12.3f}")
-        print(f"  Sortino Ratio (Ann.):  {sortino:>12.3f}")
-        print(f"  Calmar Ratio  (Ann.):  {calmar:>12.3f}")
-        print(f"  Annualization Factor:  {ann_factor:>12.1f}")
+        lines = [
+            "",
+            "=" * w,
+            f"  Strategy: {strategy_name}",
+            "=" * w,
+            f"  Initial Balance:       ${initial_val:>12,.2f}",
+            f"  Ending Balance:        ${final_val:>12,.2f}",
+            f"  Cumulative Return:     {total_ret:>+12.2f}%",
+            f"  Annualized Return:     {ann_ret:>+12.2f}%",
+            f"  Maximum Drawdown:      {max_drawdown:>12.2f}%",
+            f"  Sharpe Ratio  (Ann.):  {sharpe:>12.3f}",
+            f"  Sortino Ratio (Ann.):  {sortino:>12.3f}",
+            f"  Calmar Ratio  (Ann.):  {calmar:>12.3f}",
+            f"  Annualization Factor:  {ann_factor:>12.1f}",
+        ]
         if self.risk_free_rate > 0.0:
-            print(f"  Risk-Free Rate:        {self.risk_free_rate * 100:>11.2f}%")
-        print(f"  Executed Trades:       {len(self.portfolio.trade_log):>12}")
+            lines.append(f"  Risk-Free Rate:        {self.risk_free_rate * 100:>11.2f}%")
+        lines.append(f"  Executed Trades:       {len(self.portfolio.trade_log):>12}")
         if num_round_trips > 0:
-            print(f"  Win Rate:              {win_rate:>11.1f}%  ({num_wins}/{num_round_trips} round trips)")
-        print("=" * w + "\n")
+            lines.append(f"  Win Rate:              {win_rate:>11.1f}%  ({num_wins}/{num_round_trips} round trips)")
+        lines.append("=" * w)
+        logger.info("\n".join(lines))
 
         return BacktestResult(
             strategy_name=strategy_name,
@@ -286,4 +289,4 @@ def save_single_chart(result: BacktestResult, output_dir: str) -> None:
     path = os.path.join(output_dir, f"backtest_{safe}.png")
     plt.savefig(path, dpi=150)
     plt.close()
-    print(f"Saved chart: {path}")
+    logger.info(f"Saved chart: {path}")
