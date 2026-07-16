@@ -84,6 +84,25 @@ class Portfolio:
         max_affordable = int(available // price)
         return min(raw_qty, max_affordable)
 
+    def _clamp_short_quantity(self, raw_qty: int, price: float,
+                              extra_collateral: float = 0.0) -> int:
+        """
+        Clamps a short-sale quantity so its notional is fully collateralized
+        by free cash (plus any extra collateral, e.g. proceeds from
+        liquidating an existing long in the same order).
+
+        Without this, a short can be opened whose later buy-to-cover exceeds
+        available cash — leaving a position that can never be closed under
+        the strict cash-account model.
+        """
+        if price <= 0:
+            return 0
+        collateral = self._available_cash() + extra_collateral
+        if collateral <= 0:
+            return 0
+        max_shortable = int(collateral // price)
+        return min(raw_qty, max_shortable)
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
@@ -164,8 +183,13 @@ class Portfolio:
         elif signal.signal_type == 'SHORT':
             if current_qty > 0:
                 # Currently long: liquidate position AND open a short.
+                # Liquidation proceeds count as collateral for the new short.
                 liquidate_qty = current_qty
-                total_sell_qty = target_qty + liquidate_qty
+                short_qty = self._clamp_short_quantity(
+                    target_qty, latest_price,
+                    extra_collateral=liquidate_qty * latest_price,
+                )
+                total_sell_qty = short_qty + liquidate_qty
                 if total_sell_qty > 0:
                     return OrderEvent(
                         symbol=symbol,
@@ -175,12 +199,13 @@ class Portfolio:
                         price=latest_price,
                     )
             elif current_qty == 0:
-                # Currently flat: open a new short.
-                if target_qty > 0:
+                # Currently flat: open a new short, fully cash-collateralized.
+                short_qty = self._clamp_short_quantity(target_qty, latest_price)
+                if short_qty > 0:
                     return OrderEvent(
                         symbol=symbol,
                         order_type='MKT',
-                        quantity=target_qty,
+                        quantity=short_qty,
                         direction='SELL',
                         price=latest_price,
                     )

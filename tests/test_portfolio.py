@@ -138,6 +138,35 @@ class TestGenerateOrderShortAndExit(unittest.TestCase):
     def test_exit_flat_returns_none(self):
         self.assertIsNone(self.p.generate_order(make_signal(signal_type="EXIT")))
 
+    def test_short_from_flat_clamped_to_free_cash_collateral(self):
+        # NAV = 100k (10k cash + 90k AAPL), but only 10k free cash to
+        # collateralize the short → max 100 shares at $100, not 1000.
+        self.p.cash = 10_000.0
+        self.p.positions["AAPL"] = 900
+        self.p.latest_prices["AAPL"] = 100.0
+        order = self.p.generate_order(make_signal(signal_type="SHORT", strength=1.0))
+        self.assertEqual(order.quantity, 100)
+
+    def test_short_with_no_free_cash_returns_none(self):
+        self.p.cash = 0.0
+        self.p.positions["AAPL"] = 1000
+        self.p.latest_prices["AAPL"] = 100.0
+        self.assertIsNone(
+            self.p.generate_order(make_signal(signal_type="SHORT", strength=0.5))
+        )
+
+    def test_short_flip_counts_liquidation_proceeds_as_collateral(self):
+        # 10k cash + 200 SPY ($20k) + 700 AAPL ($70k) → NAV 100k.
+        # Full-strength short targets 1000 SPY, but collateral is only
+        # 10k cash + 20k liquidation = 30k → 300 short + 200 liquidation.
+        self.p.cash = 10_000.0
+        self.p.positions["SPY"] = 200
+        self.p.positions["AAPL"] = 700
+        self.p.latest_prices["AAPL"] = 100.0
+        order = self.p.generate_order(make_signal(signal_type="SHORT", strength=1.0))
+        self.assertEqual(order.direction, "SELL")
+        self.assertEqual(order.quantity, 300 + 200)
+
 
 class TestUpdateFill(unittest.TestCase):
     def setUp(self):
