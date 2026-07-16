@@ -572,12 +572,15 @@ class LiveBotService:
             params = state.get("params", {})
             strategy = self.strategy_factory(strategy_id, params)
 
-            # Feed history sequentially to pre-warm indicators
+            # Feed history sequentially to pre-warm indicators via the
+            # state-only fast path (no model fitting on historical bars —
+            # for rolling_ridge this replaces ~9,500 ridge fits per tick
+            # with a single fit on the live bar).
             for i in range(current_index):
                 historical_event = event_stream[i]
                 # Check positions at that moment (we approximate here by passing current)
                 approx_qty = positions.get(historical_event.symbol, {}).get("qty", 0)
-                strategy.calculate_signals(historical_event, approx_qty)
+                strategy.warmup(historical_event, approx_qty)
 
             # Evaluate signals on today's Close prices
             for event in day_events:

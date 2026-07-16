@@ -123,6 +123,31 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
 
         return 'BULL' if current_close >= sma else 'BEAR'
 
+    def _append_bar(self, event: MarketEvent) -> List[dict]:
+        """Appends the event to the per-symbol history cache and returns it."""
+        if event.symbol not in self._history:
+            self._history[event.symbol] = []
+        self._history[event.symbol].append({
+            'timestamp': event.timestamp,
+            'open': event.open_price,
+            'high': event.high_price,
+            'low': event.low_price,
+            'close': event.close_price,
+            'volume': event.volume
+        })
+        return self._history[event.symbol]
+
+    def warmup(self, event: MarketEvent, current_qty: int = 0) -> None:
+        """
+        State-only fast path for historical replay: appends the bar to the
+        history cache and skips feature construction, training, and
+        prediction entirely. The model's only cross-bar state is that
+        history, so warmup + one calculate_signals on the live bar produces
+        the same decision as replaying everything through calculate_signals
+        — at ~1 ridge fit per tick instead of one per historical bar.
+        """
+        self._append_bar(event)
+
     def get_hit_rate(self, symbol: str, window: int = None) -> float:
         """
         Fraction of resolved directional calls that got the sign right.
@@ -145,20 +170,7 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
     def calculate_signals(self, event: MarketEvent, current_qty: int) -> List[SignalEvent]:
         signals: List[SignalEvent] = []
         symbol = event.symbol
-
-        if symbol not in self._history:
-            self._history[symbol] = []
-
-        self._history[symbol].append({
-            'timestamp': event.timestamp,
-            'open': event.open_price,
-            'high': event.high_price,
-            'low': event.low_price,
-            'close': event.close_price,
-            'volume': event.volume
-        })
-
-        history = self._history[symbol]
+        history = self._append_bar(event)
 
         # ── Resolve the previous directional call, if any ──────────────
         # The prediction made on the prior bar forecast THIS bar's return;

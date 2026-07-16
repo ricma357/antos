@@ -16,12 +16,24 @@ class BaseStrategy(ABC):
         """
         Consumes a new price bar (MarketEvent) and runs quantitative calculations
         to generate potential trading recommendations.
-        
+
         Args:
             event (MarketEvent): The latest OHLCV market update.
             current_qty (int): The current position quantity held in the portfolio.
-            
+
         Returns:
             List[SignalEvent]: A list of zero or more generated signal recommendations.
         """
         pass
+
+    def warmup(self, event: MarketEvent, current_qty: int = 0) -> None:
+        """
+        Feeds a historical bar to rebuild internal state WITHOUT requiring a
+        trading decision. Live systems replay the full history through this
+        on every tick, so expensive strategies should override it with a
+        state-only fast path (e.g. append to history, skip model fitting).
+
+        The default delegates to calculate_signals and discards the signals,
+        so behavior is identical for strategies that don't override it.
+        """
+        self.calculate_signals(event, current_qty)

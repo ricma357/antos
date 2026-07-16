@@ -1,21 +1,28 @@
 import unittest
 from datetime import datetime, timedelta
+from unittest.mock import patch
+
+import numpy as np
 
 from src.strategy.rolling_ridge import RollingRidgeDirectionalPredictor
 from src.events import MarketEvent
 
 
+def make_bar(close, day_offset, symbol="SPY", volume=1_000_000):
+    return MarketEvent(
+        timestamp=datetime(2024, 1, 1) + timedelta(days=day_offset),
+        symbol=symbol,
+        open_price=close, high_price=close * 1.01,
+        low_price=close * 0.99, close_price=close, volume=volume,
+    )
+
+
 def feed_series(strategy, closes, symbol="SPY", volumes=None, current_qty=0):
     """Feeds a close-price series as daily bars; returns all emitted signals."""
     signals = []
-    start = datetime(2024, 1, 1)
     for i, close in enumerate(closes):
         volume = volumes[i] if volumes else 1_000_000
-        bar = MarketEvent(
-            timestamp=start + timedelta(days=i), symbol=symbol,
-            open_price=close, high_price=close * 1.01,
-            low_price=close * 0.99, close_price=close, volume=volume,
-        )
+        bar = make_bar(close, i, symbol=symbol, volume=volume)
         signals.extend(strategy.calculate_signals(bar, current_qty))
     return signals
 
@@ -66,6 +73,55 @@ class TestNumericalRobustness(unittest.TestCase):
         strategy = small_strategy()
         closes = [100.0 * (1.02 ** i) for i in range(40)]  # < min_required
         self.assertEqual(feed_series(strategy, closes), [])
+
+
+class TestWarmupFastPath(unittest.TestCase):
+    def test_warmup_does_zero_ridge_fits(self):
+        strategy = small_strategy()
+        closes = [100.0 * (1.02 ** i) for i in range(60)]
+        with patch("numpy.linalg.solve", wraps=np.linalg.solve) as solve:
+            for i, close in enumerate(closes):
+                strategy.warmup(make_bar(close, i))
+            self.assertEqual(solve.call_count, 0,
+                             "warmup must never fit the model")
+            # The live bar still gets exactly one fit
+            strategy.calculate_signals(make_bar(closes[-1] * 1.02, 60), 0)
+            self.assertEqual(solve.call_count, 1)
+
+    def test_warmup_then_live_bar_equals_full_replay(self):
+        """The decision on the live bar must be identical whether history
+        was replayed via warmup or via full calculate_signals."""
+        closes = [100.0 * (1.02 ** i) for i in range(60)]
+        live_close = closes[-1] * 1.02
+
+        full = small_strategy()
+        feed_series(full, closes)
+        full_signals = full.calculate_signals(make_bar(live_close, 60), 0)
+
+        fast = small_strategy()
+        for i, close in enumerate(closes):
+            fast.warmup(make_bar(close, i))
+        fast_signals = fast.calculate_signals(make_bar(live_close, 60), 0)
+
+        self.assertEqual(
+            [(s.signal_type, s.strength) for s in full_signals],
+            [(s.signal_type, s.strength) for s in fast_signals],
+        )
+        self.assertTrue(full_signals, "sanity: the drift series must signal")
+
+    def test_base_class_default_warmup_delegates(self):
+        from src.strategy.base import BaseStrategy
+        from src.events import SignalEvent
+
+        class Counting(BaseStrategy):
+            calls = 0
+            def calculate_signals(self, event, current_qty):
+                self.calls += 1
+                return [SignalEvent(event.symbol, event.timestamp, 'LONG', 0.5)]
+
+        strat = Counting()
+        strat.warmup(make_bar(100.0, 0))
+        self.assertEqual(strat.calls, 1)
 
 
 class TestHitRateDiagnostics(unittest.TestCase):
