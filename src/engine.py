@@ -15,6 +15,62 @@ from src.events import MarketEvent
 logger = logging.getLogger(__name__)
 
 
+def _round_trip_stats(trade_log: List[dict]) -> tuple:
+    """
+    Replays the fill log to count completed round trips and how many were
+    profitable after commissions.
+
+    A round trip = a position opened from flat and later closed back to flat
+    (or flipped to the opposite side). Realized P&L per trip is computed
+    against the weighted-average entry price; commissions on every fill in
+    the trip count against it. Works for both long and short trips.
+
+    Returns:
+        (num_round_trips, num_wins)
+    """
+    open_state: Dict[str, dict] = {}  # symbol -> {'qty', 'avg', 'realized'}
+    trips = 0
+    wins = 0
+
+    for t in trade_log:
+        sym = t['symbol']
+        price = t['fill_price']
+        commission = t.get('commission', 0.0)
+        signed_qty = t['quantity'] if t['direction'] == 'BUY' else -t['quantity']
+
+        state = open_state.setdefault(sym, {'qty': 0, 'avg': 0.0, 'realized': 0.0})
+        cur = state['qty']
+
+        if cur == 0 or (cur > 0) == (signed_qty > 0):
+            # Opening a new position or adding to the existing side.
+            new_qty = cur + signed_qty
+            state['avg'] = (
+                (abs(cur) * state['avg'] + abs(signed_qty) * price) / abs(new_qty)
+            )
+            state['qty'] = new_qty
+            state['realized'] -= commission
+        else:
+            # Reducing, closing, or flipping the position.
+            close_qty = min(abs(signed_qty), abs(cur))
+            side = 1 if cur > 0 else -1  # long profits on rise, short on fall
+            state['realized'] += side * (price - state['avg']) * close_qty - commission
+
+            new_qty = cur + signed_qty
+            if new_qty == 0 or (new_qty > 0) != (cur > 0):
+                # Position returned to flat (or flipped) — trip complete.
+                trips += 1
+                if state['realized'] > 0:
+                    wins += 1
+                # Any leftover quantity opens the next trip at this fill price.
+                state['qty'] = new_qty
+                state['avg'] = price if new_qty != 0 else 0.0
+                state['realized'] = 0.0
+            else:
+                state['qty'] = new_qty
+
+    return trips, wins
+
+
 @dataclass
 class BacktestResult:
     """
@@ -103,7 +159,7 @@ class BacktestEngine:
                 metrics={k: 0.0 for k in [
                     'initial_balance', 'final_balance', 'total_return_pct',
                     'ann_return_pct', 'max_drawdown_pct', 'sharpe', 'sortino',
-                    'calmar', 'num_trades'
+                    'calmar', 'num_trades', 'num_round_trips', 'win_rate_pct'
                 ]},
             )
 
@@ -154,8 +210,9 @@ class BacktestEngine:
         total_ret = (final_val - initial_val) / initial_val * 100
         calmar    = ann_ret / abs(max_drawdown) if max_drawdown != 0 else 0.0
 
-        # Win rate
-        winning_trades = [t for t in self.portfolio.trade_log if t['direction'] == 'SELL' and t.get('nav_after', 0) > 0]
+        # Win rate over completed round trips (position opened then closed to flat)
+        num_round_trips, num_wins = _round_trip_stats(self.portfolio.trade_log)
+        win_rate = (num_wins / num_round_trips * 100) if num_round_trips > 0 else 0.0
 
         metrics = {
             'initial_balance':  initial_val,
@@ -167,6 +224,8 @@ class BacktestEngine:
             'sortino':          sortino,
             'calmar':           calmar,
             'num_trades':       len(self.portfolio.trade_log),
+            'num_round_trips':  num_round_trips,
+            'win_rate_pct':     win_rate,
             'ann_factor':       ann_factor,
         }
 
@@ -186,6 +245,8 @@ class BacktestEngine:
         if self.risk_free_rate > 0.0:
             print(f"  Risk-Free Rate:        {self.risk_free_rate * 100:>11.2f}%")
         print(f"  Executed Trades:       {len(self.portfolio.trade_log):>12}")
+        if num_round_trips > 0:
+            print(f"  Win Rate:              {win_rate:>11.1f}%  ({num_wins}/{num_round_trips} round trips)")
         print("=" * w + "\n")
 
         return BacktestResult(

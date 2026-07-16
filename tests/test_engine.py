@@ -135,6 +135,67 @@ class TestBacktestEngine(unittest.TestCase):
         # Drawdown from 120k peak to 90k = -25%
         self.assertAlmostEqual(result.metrics["max_drawdown_pct"], -25.0)
 
+    def test_win_rate_winning_round_trip(self):
+        bars = [
+            ("2024-01-02", 100, 101, 99, 100),   # LONG signal
+            ("2024-01-03", 100, 101, 99, 100),   # buy @ 100
+            ("2024-01-04", 120, 121, 119, 120),  # EXIT signal
+            ("2024-01-05", 120, 121, 119, 120),  # sell @ 120 → profit
+        ]
+        result = self._run(bars, {0: ("LONG", 0.5), 2: ("EXIT", 0.5)})
+        self.assertEqual(result.metrics["num_round_trips"], 1)
+        self.assertAlmostEqual(result.metrics["win_rate_pct"], 100.0)
+
+    def test_win_rate_losing_round_trip(self):
+        bars = [
+            ("2024-01-02", 100, 101, 99, 100),
+            ("2024-01-03", 100, 101, 99, 100),   # buy @ 100
+            ("2024-01-04", 80, 81, 79, 80),      # EXIT signal
+            ("2024-01-05", 80, 81, 79, 80),      # sell @ 80 → loss
+        ]
+        result = self._run(bars, {0: ("LONG", 0.5), 2: ("EXIT", 0.5)})
+        self.assertEqual(result.metrics["num_round_trips"], 1)
+        self.assertAlmostEqual(result.metrics["win_rate_pct"], 0.0)
+
+    def test_win_rate_mixed_trips(self):
+        bars = [
+            ("2024-01-02", 100, 101, 99, 100),   # LONG signal
+            ("2024-01-03", 100, 101, 99, 100),   # buy @ 100
+            ("2024-01-04", 120, 121, 119, 120),  # EXIT signal
+            ("2024-01-05", 120, 121, 119, 120),  # sell @ 120 → WIN
+            ("2024-01-08", 120, 121, 119, 120),  # LONG signal
+            ("2024-01-09", 120, 121, 119, 120),  # buy @ 120
+            ("2024-01-10", 100, 101, 99, 100),   # EXIT signal
+            ("2024-01-11", 100, 101, 99, 100),   # sell @ 100 → LOSS
+        ]
+        result = self._run(bars, {
+            0: ("LONG", 0.5), 2: ("EXIT", 0.5),
+            4: ("LONG", 0.5), 6: ("EXIT", 0.5),
+        })
+        self.assertEqual(result.metrics["num_round_trips"], 2)
+        self.assertAlmostEqual(result.metrics["win_rate_pct"], 50.0)
+
+    def test_win_rate_breakeven_price_with_fees_is_loss(self):
+        bars = [
+            ("2024-01-02", 100, 101, 99, 100),
+            ("2024-01-03", 100, 101, 99, 100),   # buy @ ~100 + fees
+            ("2024-01-04", 100, 101, 99, 100),   # EXIT signal
+            ("2024-01-05", 100, 101, 99, 100),   # sell @ ~100 - fees
+        ]
+        result = self._run(bars, {0: ("LONG", 0.5), 2: ("EXIT", 0.5)},
+                           commission=0.001, slippage=0.0005)
+        self.assertEqual(result.metrics["num_round_trips"], 1)
+        self.assertAlmostEqual(result.metrics["win_rate_pct"], 0.0)
+
+    def test_open_position_is_not_a_round_trip(self):
+        bars = [
+            ("2024-01-02", 100, 101, 99, 100),   # LONG signal
+            ("2024-01-03", 100, 101, 99, 100),   # buy — never exited
+        ]
+        result = self._run(bars, {0: ("LONG", 0.5)})
+        self.assertEqual(result.metrics["num_round_trips"], 0)
+        self.assertEqual(result.metrics["win_rate_pct"], 0.0)
+
     def test_multi_asset_engine_run(self):
         write_bars(self.data_dir, "AAPL", [
             ("2024-01-02", 50, 51, 49, 50),
