@@ -158,6 +158,54 @@ class TestWarmupFastPath(unittest.TestCase):
         self.assertEqual(strat.calls, 1)
 
 
+class TestRegimeHysteresis(unittest.TestCase):
+    """trend_filter_window=15, all bars at 100 → SMA pinned near 100,
+    so band edges are easy to reason about exactly."""
+
+    def _seed_bull(self, b):
+        s = small_strategy(regime_hysteresis=b)
+        for i in range(15):
+            s.warmup(make_bar(100.0, i))
+        self.assertEqual(s._compute_regime("SPY"), 'BULL')
+        return s
+
+    def test_dip_inside_band_does_not_flip(self):
+        s = self._seed_bull(b=0.02)
+        s.warmup(make_bar(99.0, 15))  # 1% below SMA — inside the 2% band
+        self.assertEqual(s._compute_regime("SPY"), 'BULL')
+
+    def test_same_dip_flips_without_hysteresis(self):
+        s = self._seed_bull(b=0.0)
+        s.warmup(make_bar(99.0, 15))
+        self.assertEqual(s._compute_regime("SPY"), 'BEAR')
+
+    def test_decisive_break_flips_and_reclaim_needs_band(self):
+        s = self._seed_bull(b=0.02)
+        s.warmup(make_bar(90.0, 15))   # −10%: decisive break → BEAR
+        self.assertEqual(s._compute_regime("SPY"), 'BEAR')
+        # SMA ≈ 99.33; +0.7% above it is inside the band → still BEAR
+        s.warmup(make_bar(100.0, 16))
+        self.assertEqual(s._compute_regime("SPY"), 'BEAR')
+        # SMA ≈ 99.67; 105 clears SMA×1.02 ≈ 101.66 → BULL reclaimed
+        s.warmup(make_bar(105.0, 17))
+        self.assertEqual(s._compute_regime("SPY"), 'BULL')
+
+    def test_warmup_and_full_path_build_identical_regime_state(self):
+        closes = [100.0 + ((-1) ** i) * 2.0 + i * 0.1 for i in range(60)]
+        via_warmup = small_strategy(regime_hysteresis=0.02)
+        via_full = small_strategy(regime_hysteresis=0.02)
+        for i, c in enumerate(closes):
+            via_warmup.warmup(make_bar(c, i))
+            via_full.calculate_signals(make_bar(c, i), 0)
+        self.assertEqual(via_warmup._regime, via_full._regime)
+
+    def test_invalid_hysteresis_raises(self):
+        with self.assertRaises(ValueError):
+            small_strategy(regime_hysteresis=-0.01)
+        with self.assertRaises(ValueError):
+            small_strategy(regime_hysteresis=0.5)
+
+
 class TestHitRateDiagnostics(unittest.TestCase):
     def test_hit_rate_none_before_enough_calls(self):
         strategy = small_strategy()

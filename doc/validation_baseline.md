@@ -98,6 +98,24 @@ quality improves; revisit after #17/#18.
 
 ## Falsified experiments
 
+### Regime-filter hysteresis (2026-07-17) — kept at b=0
+
+Hypothesis: the single-crossing BULL/BEAR flip whipsaws when price hugs
+the SMA-200; a dead band (BEAR only below SMA×(1−b), BULL only above
+SMA×(1+b)) should cut churn, especially in 2010–2011.
+
+Train window showed a weak edge at b=0.02 (Sharpe 1.014 vs 0.996).
+Out-of-sample it failed: bull was a wash (+295.35% vs +295.29%), and the
+crisis — where the payoff was predicted — got consistently *worse*
+(Sharpe 0.550 vs 0.579; 2008 −1.81% vs −1.53%; 2010 +7.4% vs +14.2%;
+2011 +2.7% vs +5.5%). The dead band delays bear-market exits just long
+enough to cost more than the whipsaw it saves; the vol-scaled threshold
+(shipped) already suppresses most crossing churn at the entry level.
+
+Kept: the `regime_hysteresis` parameter (default 0, exact legacy
+behavior — verified bit-identical) and the O(1) rolling-SMA regime
+state machine, which also made regime state warmup-safe.
+
 ### Feature standardization + unpenalized intercept (2026-07-16)
 
 The textbook ridge fix — z-scored features and an intercept fit via

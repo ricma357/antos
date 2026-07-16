@@ -41,6 +41,7 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         strength: float = 0.50,
         trend_filter_window: int = 200,
         vol_threshold_k: float = 0.15,
+        regime_hysteresis: float = 0.0,
     ):
         """
         Args:
@@ -62,6 +63,12 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
                                   window only, validated out-of-sample on
                                   2024-2026 and 2006-2012 crisis data
                                   (see doc/validation_baseline.md).
+            regime_hysteresis:    Dead band around the trend SMA to prevent
+                                  regime whipsaw. With hysteresis b, an
+                                  established BULL regime only flips to BEAR
+                                  when close < SMA×(1−b), and BEAR only flips
+                                  back when close > SMA×(1+b). 0 = flip on
+                                  every crossing (legacy behavior).
         """
         if lookback_window < 10:
             raise ValueError(f"lookback_window must be >= 10, got {lookback_window}")
@@ -73,6 +80,8 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
             raise ValueError(f"vol_threshold_k must be non-negative, got {vol_threshold_k}")
         if vol_threshold_k == 0:
             vol_threshold_k = None  # 0 = disabled (UI convention) → fixed threshold
+        if not 0.0 <= regime_hysteresis < 0.5:
+            raise ValueError(f"regime_hysteresis must be in [0, 0.5), got {regime_hysteresis}")
 
         self.lookback_window = lookback_window
         self.l2_lambda = l2_lambda
@@ -80,6 +89,13 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         self.strength = strength
         self.trend_filter_window = trend_filter_window
         self.vol_threshold_k = vol_threshold_k
+        self.regime_hysteresis = regime_hysteresis
+
+        # Path-dependent regime state (per symbol) and O(1) rolling SMA
+        # accumulator, both maintained by _append_bar so warmup() replays
+        # build identical regime state to full calculate_signals replays.
+        self._regime: Dict[str, str] = {}
+        self._sma_sum: Dict[str, float] = {}
 
         # History cache per symbol: List[dict]
         self._history: Dict[str, List[dict]] = {}
@@ -125,29 +141,28 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
 
         return np.array([roc_1, roc_3, range_ratio, volume_z, ma_dist])
 
-    def _compute_regime(self, history: List[dict]) -> str:
+    def _compute_regime(self, symbol: str) -> str:
         """
-        Determines the macro regime by comparing the latest close to the
-        trend_filter_window-period SMA.
-
-        Returns:
-            'BULL' if close >= SMA, 'BEAR' if close < SMA, 'UNKNOWN' if not
-            enough data.
+        Returns the current regime for the symbol from the state machine
+        maintained in _append_bar: 'BULL', 'BEAR', or 'UNKNOWN' when the
+        trend window hasn't filled yet. With regime_hysteresis > 0 the
+        state is path-dependent — an established regime persists until
+        price breaks decisively out of the SMA dead band.
         """
-        if len(history) < self.trend_filter_window:
-            return 'UNKNOWN'
-
-        closes = [h['close'] for h in history[-self.trend_filter_window:]]
-        sma = sum(closes) / len(closes)
-        current_close = history[-1]['close']
-
-        return 'BULL' if current_close >= sma else 'BEAR'
+        return self._regime.get(symbol, 'UNKNOWN')
 
     def _append_bar(self, event: MarketEvent) -> List[dict]:
-        """Appends the event to the per-symbol history cache and returns it."""
-        if event.symbol not in self._history:
-            self._history[event.symbol] = []
-        self._history[event.symbol].append({
+        """
+        Appends the event to the per-symbol history cache, maintains the
+        rolling trend-SMA accumulator, and advances the regime state
+        machine. Runs on both the warmup and live paths so regime state is
+        identical however history was replayed.
+        """
+        symbol = event.symbol
+        if symbol not in self._history:
+            self._history[symbol] = []
+        history = self._history[symbol]
+        history.append({
             'timestamp': event.timestamp,
             'open': event.open_price,
             'high': event.high_price,
@@ -155,7 +170,31 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
             'close': event.close_price,
             'volume': event.volume
         })
-        return self._history[event.symbol]
+
+        # O(1) rolling SMA over the trend filter window
+        window = self.trend_filter_window
+        self._sma_sum[symbol] = self._sma_sum.get(symbol, 0.0) + event.close_price
+        if len(history) > window:
+            self._sma_sum[symbol] -= history[-(window + 1)]['close']
+
+        if len(history) >= window:
+            sma = self._sma_sum[symbol] / window
+            close = event.close_price
+            prev = self._regime.get(symbol)
+            b = self.regime_hysteresis
+
+            if prev == 'BULL':
+                # Established bull: demand a decisive break below the band.
+                regime = 'BEAR' if close < sma * (1.0 - b) else 'BULL'
+            elif prev == 'BEAR':
+                # Established bear: demand a decisive reclaim above the band.
+                regime = 'BULL' if close > sma * (1.0 + b) else 'BEAR'
+            else:
+                # First reading: plain comparison seeds the state.
+                regime = 'BULL' if close >= sma else 'BEAR'
+            self._regime[symbol] = regime
+
+        return history
 
     def warmup(self, event: MarketEvent, current_qty: int = 0) -> None:
         """
@@ -212,7 +251,7 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
             return signals
 
         # ── Regime Detection ───────────────────────────────────────────
-        regime = self._compute_regime(history)
+        regime = self._compute_regime(symbol)
         if regime == 'UNKNOWN':
             return signals
 
