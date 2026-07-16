@@ -64,6 +64,12 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         # History cache per symbol: List[dict]
         self._history: Dict[str, List[dict]] = {}
 
+        # Prediction diagnostics: last directional call awaiting its
+        # outcome, and the rolling record of resolved calls per symbol.
+        self._last_prediction: Dict[str, float] = {}
+        self._hit_history: Dict[str, List[bool]] = {}
+        self._max_hit_history = 500
+
     def _compute_features(self, history: List[dict], idx: int) -> np.ndarray:
         """
         Computes 5 normalized indicators for index idx in history.
@@ -117,6 +123,25 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
 
         return 'BULL' if current_close >= sma else 'BEAR'
 
+    def get_hit_rate(self, symbol: str, window: int = None) -> float:
+        """
+        Fraction of resolved directional calls that got the sign right.
+
+        Args:
+            symbol: instrument to report on.
+            window: number of most recent calls to consider (None = all).
+
+        Returns:
+            Hit rate in [0, 1], or None if fewer than 5 calls have resolved
+            (too few to be meaningful).
+        """
+        hits = self._hit_history.get(symbol, [])
+        if window is not None:
+            hits = hits[-window:]
+        if len(hits) < 5:
+            return None
+        return sum(hits) / len(hits)
+
     def calculate_signals(self, event: MarketEvent, current_qty: int) -> List[SignalEvent]:
         signals: List[SignalEvent] = []
         symbol = event.symbol
@@ -134,6 +159,19 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         })
 
         history = self._history[symbol]
+
+        # ── Resolve the previous directional call, if any ──────────────
+        # The prediction made on the prior bar forecast THIS bar's return;
+        # now that it has arrived we can score it.
+        if symbol in self._last_prediction and len(history) >= 2:
+            prev_close = history[-2]['close']
+            if prev_close > 0:
+                actual_return = (history[-1]['close'] - prev_close) / prev_close
+                predicted = self._last_prediction.pop(symbol)
+                hits = self._hit_history.setdefault(symbol, [])
+                hits.append((predicted > 0) == (actual_return > 0))
+                if len(hits) > self._max_hit_history:
+                    del hits[:-self._max_hit_history]
 
         # We need at least 25 bars for computing features, plus lookback_window bars for training,
         # plus 1 extra bar for the next-day target return.
@@ -161,6 +199,20 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         Y = np.array(Y)
 
         # ── Solve Ridge Regression ─────────────────────────────────────
+        # NOTE (2026-07-16, deliberate): features are NOT standardized and
+        # there is NO intercept — and this is load-bearing. The textbook
+        # fix (z-scored features + unpenalized intercept via Y-centering)
+        # was implemented and falsified against the validation harness:
+        # holdout 2024-2026 degraded and the 2006-2012 crisis flipped from
+        # +28% to -22% (see doc/validation_baseline.md, "Falsified
+        # experiments"). With ~50% directional hit rates, the model's edge
+        # comes from over-shrinkage: raw return-scale features under this
+        # penalty crush predictions toward zero, so it only trades when
+        # trailing drift is strong — an accidental but effective
+        # high-conviction trend filter. An unpenalized intercept instead
+        # injects trailing drift into EVERY prediction, whipsawing the
+        # threshold and doubling fee drag. Do not "fix" this without
+        # beating the baseline in validate_strategy.py on BOTH periods.
         K = X.shape[1]
         XTX = np.dot(X.T, X)
         XT_Y = np.dot(X.T, Y)
@@ -178,6 +230,11 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
 
         predicts_up = predicted_return > self.prediction_threshold
         predicts_down = predicted_return < -self.prediction_threshold
+
+        # Track directional calls (only when the model actually commits to
+        # a direction) so live systems can monitor rolling accuracy.
+        if predicts_up or predicts_down:
+            self._last_prediction[symbol] = predicted_return
 
         # ── Regime-Aware Signal Generation ─────────────────────────────
         if regime == 'BULL':

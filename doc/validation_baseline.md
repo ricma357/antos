@@ -33,6 +33,43 @@ Trades: 222 (111 round trips, 48.6% win rate).
 Trades: 200 (99 round trips, 48.5% win rate).
 (Full yearly table reproducible via `python3 validate_strategy.py --crisis`.)
 
+## Falsified experiments
+
+### Feature standardization + unpenalized intercept (2026-07-16)
+
+The textbook ridge fix — z-scored features and an intercept fit via
+target centering — was implemented, tuned honestly (λ and threshold
+re-tuned on 2020–2023 only; best plateau λ=10, thr=0.002), and evaluated
+on held-out data. Results vs this baseline:
+
+| Metric | Baseline | Standardized+intercept | Verdict |
+|--------|----------|------------------------|---------|
+| Bull FULL return | +268.90% | +151.79% | ✗ |
+| Bull FULL Sharpe | 0.948 | 0.753 | ✗ |
+| Holdout 2024 return | +48.97% | +15.27% | ✗ |
+| Crisis FULL return | +28.06% | **−22.04%** | ✗✗ |
+| Crisis max DD | −16.89% | −31.89% | ✗✗ |
+| Crisis trades | 200 | 292 | ✗ |
+
+**Why it failed:** directional hit rates are ~49–52% everywhere — the
+features carry no real predictive edge. The baseline model's advantage
+is its *accidental over-shrinkage*: an unscaled L2 penalty on raw
+return-scale features crushes predictions toward zero, so it only
+trades when trailing drift is strong, functioning as a high-conviction
+trend filter with low turnover. The unpenalized intercept injected
+trailing drift (≈±0.1%/day) into every prediction, constantly crossing
+the entry threshold, whipsawing in choppy regimes (2008, 2010–2011) and
+roughly doubling fee drag.
+
+**Kept from the experiment:** per-symbol directional hit-rate
+diagnostics (`get_hit_rate`), which exposed the coin-flip accuracy and
+now feed the live kill-switch guardrail.
+
+**Lesson for future work:** improvements should target *when to trust
+the trend* (volatility-scaled conviction thresholds, regime hysteresis,
+turnover control) rather than better point predictions from these
+features.
+
 ## Honest read
 
 - The strategy's edge is **risk reduction**, not raw return: it lags
