@@ -48,13 +48,9 @@ END_DATE = None
 
 def make_strategy():
     """The strategy under evaluation. Edit params here when tuning."""
-    return RollingRidgeDirectionalPredictor(
-        lookback_window=90,
-        l2_lambda=1.0,
-        prediction_threshold=0.001,
-        strength=0.50,
-        trend_filter_window=200,
-    )
+    # Shipped defaults (vol_threshold_k=0.15 was tuned on the 2020-2023
+    # train window only; see doc/validation_baseline.md for the record).
+    return RollingRidgeDirectionalPredictor()
 
 
 def run(strategy, name):

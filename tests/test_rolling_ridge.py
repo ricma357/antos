@@ -75,6 +75,40 @@ class TestNumericalRobustness(unittest.TestCase):
         self.assertEqual(feed_series(strategy, closes), [])
 
 
+class TestVolScaledThreshold(unittest.TestCase):
+    def test_zero_k_disables_vol_scaling(self):
+        s = small_strategy(vol_threshold_k=0)
+        self.assertIsNone(s.vol_threshold_k)
+
+    def test_negative_k_raises(self):
+        with self.assertRaises(ValueError):
+            small_strategy(vol_threshold_k=-0.1)
+
+    def test_zero_vol_falls_back_to_fixed_threshold(self):
+        # Constant growth → trailing returns identical → sigma == 0, so the
+        # vol-scaled strategy must behave exactly like the fixed one.
+        closes = [100.0 * (1.02 ** i) for i in range(60)]
+        scaled = small_strategy(vol_threshold_k=0.15)
+        fixed = small_strategy(vol_threshold_k=0)
+        scaled_signals = feed_series(scaled, closes)
+        fixed_signals = feed_series(fixed, closes)
+        self.assertTrue(fixed_signals, "sanity: drift series must signal")
+        self.assertEqual([s.signal_type for s in scaled_signals],
+                         [s.signal_type for s in fixed_signals])
+
+    def test_extreme_k_blocks_low_conviction_entries(self):
+        # Noisy uptrend: the fixed threshold trades it, but demanding
+        # 25x trailing vol of conviction must silence every entry.
+        closes = [100.0 * (1.015 ** i) * (1 + (0.01 if i % 2 == 0 else -0.01))
+                  for i in range(60)]
+        fixed = small_strategy(vol_threshold_k=0)
+        strict = small_strategy(vol_threshold_k=25.0)
+        fixed_longs = [s for s in feed_series(fixed, closes) if s.signal_type == 'LONG']
+        strict_longs = [s for s in feed_series(strict, closes) if s.signal_type == 'LONG']
+        self.assertTrue(fixed_longs, "sanity: fixed threshold must trade this series")
+        self.assertEqual(strict_longs, [])
+
+
 class TestWarmupFastPath(unittest.TestCase):
     def test_warmup_does_zero_ridge_fits(self):
         strategy = small_strategy()

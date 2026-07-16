@@ -31,6 +31,8 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
       predicted_return = x_today * beta
     """
 
+    VOL_WINDOW = 20  # trailing window (bars) for realized-volatility estimate
+
     def __init__(
         self,
         lookback_window: int = 90,
@@ -38,6 +40,7 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         prediction_threshold: float = 0.001,
         strength: float = 0.50,
         trend_filter_window: int = 200,
+        vol_threshold_k: float = 0.15,
     ):
         """
         Args:
@@ -47,6 +50,18 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
             strength:             Capital allocation fraction per trade (0.0-1.0).
             trend_filter_window:  SMA period for macro regime detection (default: 200).
                                   Price above this SMA = Bull, below = Bear.
+            vol_threshold_k:      If set, the entry/exit threshold becomes
+                                  k x trailing realized daily volatility
+                                  (std of the last VOL_WINDOW returns) instead
+                                  of the fixed prediction_threshold. A fixed
+                                  threshold means something different in a
+                                  calm market than in a VIX-40 regime; scaling
+                                  demands proportionally stronger conviction
+                                  when noise is high. None = fixed threshold.
+                                  Default 0.15 — tuned on the 2020-2023 train
+                                  window only, validated out-of-sample on
+                                  2024-2026 and 2006-2012 crisis data
+                                  (see doc/validation_baseline.md).
         """
         if lookback_window < 10:
             raise ValueError(f"lookback_window must be >= 10, got {lookback_window}")
@@ -54,12 +69,17 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
             raise ValueError(f"l2_lambda must be non-negative, got {l2_lambda}")
         if trend_filter_window < 10:
             raise ValueError(f"trend_filter_window must be >= 10, got {trend_filter_window}")
+        if vol_threshold_k is not None and vol_threshold_k < 0:
+            raise ValueError(f"vol_threshold_k must be non-negative, got {vol_threshold_k}")
+        if vol_threshold_k == 0:
+            vol_threshold_k = None  # 0 = disabled (UI convention) → fixed threshold
 
         self.lookback_window = lookback_window
         self.l2_lambda = l2_lambda
         self.prediction_threshold = prediction_threshold
         self.strength = strength
         self.trend_filter_window = trend_filter_window
+        self.vol_threshold_k = vol_threshold_k
 
         # History cache per symbol: List[dict]
         self._history: Dict[str, List[dict]] = {}
@@ -240,8 +260,17 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
         current_features = self._compute_features(history, len(history) - 1)
         predicted_return = float(np.dot(current_features, beta))
 
-        predicts_up = predicted_return > self.prediction_threshold
-        predicts_down = predicted_return < -self.prediction_threshold
+        # ── Effective threshold: fixed or volatility-scaled ────────────
+        threshold = self.prediction_threshold
+        if self.vol_threshold_k is not None:
+            closes = np.array([h['close'] for h in history[-(self.VOL_WINDOW + 1):]])
+            returns = np.diff(closes) / closes[:-1]
+            sigma = float(returns.std())
+            if sigma > 0:
+                threshold = self.vol_threshold_k * sigma
+
+        predicts_up = predicted_return > threshold
+        predicts_down = predicted_return < -threshold
 
         # Track directional calls (only when the model actually commits to
         # a direction) so live systems can monitor rolling accuracy.

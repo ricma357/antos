@@ -33,6 +33,39 @@ Trades: 222 (111 round trips, 48.6% win rate).
 Trades: 200 (99 round trips, 48.5% win rate).
 (Full yearly table reproducible via `python3 validate_strategy.py --crisis`.)
 
+## Shipped improvements
+
+### Volatility-scaled entry threshold (2026-07-17) — `vol_threshold_k=0.15`
+
+A trade now requires `|predicted return| > k × trailing 20-bar realized
+volatility` instead of a fixed 0.1%. Tuned on the 2020–2023 train window
+only (stable plateau k=0.10–0.20; plateau center chosen), then validated
+out-of-sample. Results vs this baseline:
+
+| Metric | Baseline (fixed) | Vol-scaled k=0.15 | Verdict |
+|--------|------------------|-------------------|---------|
+| Bull FULL return | +268.90% | +295.29% | ✓ |
+| Bull FULL max DD | −25.75% | −20.40% | ✓ |
+| Bull trades | 222 | 110 | ✓ (half the fee drag) |
+| Holdout 2025 return | −0.14% | +2.01% | ✓ |
+| Holdout 2026 return | −1.37% | −0.77% | ✓ |
+| Crisis FULL return | +28.06% | **+77.49%** | ✓✓ |
+| Crisis FULL Sharpe | 0.331 | 0.695 (beats B&H 0.545) | ✓✓ |
+| Crisis 2008 return | −9.10% | −2.54% | ✓✓ |
+| Crisis trades | 200 | 126 | ✓ |
+
+(Holdout 2024: +39.88% vs +48.97% — the one give-back, accepted for the
+across-the-board risk and crisis gains.)
+
+**Why it works:** consistent with the falsified-experiment lesson below —
+the model's edge is high-conviction trend filtering, not prediction.
+A fixed threshold lets noise through exactly when noise is largest;
+scaling by realized vol demands proportionally stronger conviction in
+volatile regimes, cutting the 2008/2010/2011 churn that bled the
+baseline. Shipped as the constructor default; the live bot picks it up
+via registry defaults. Set `vol_threshold_k=0` to recover the old
+fixed-threshold behavior.
+
 ## Falsified experiments
 
 ### Feature standardization + unpenalized intercept (2026-07-16)
