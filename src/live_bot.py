@@ -550,32 +550,55 @@ class LiveBotService:
                     f"Commission: ${commission:.2f}"
                 )
 
-        # Reconstruct strategy internal history to produce correct current signals
-        strategy_id = state.get("strategy_id", "")
-        params = state.get("params", {})
-        strategy = self.strategy_factory(strategy_id, params)
+        # ── Idempotency guard: one signal evaluation per bar date ──────
+        # A daily strategy must act on each candle exactly once. The market
+        # clock fires twice per trading day (open + close ticks, plus
+        # catch-up ticks), so in live mode the same daily candle arrives
+        # repeatedly. Re-evaluating it after fills causes order churn:
+        # an EXIT fills, the re-run sees a flat position at the same bar,
+        # re-enters LONG at the same price, and the ledger fills with
+        # duplicate trades. Later ticks on an already-evaluated bar still
+        # process fills — they just don't generate new signals.
+        already_evaluated = state.get("last_signal_date") == date_str
 
-        # Feed history sequentially to pre-warm indicators
-        for i in range(current_index):
-            historical_event = event_stream[i]
-            # Check positions at that moment (we approximate here by passing current)
-            approx_qty = positions.get(historical_event.symbol, {}).get("qty", 0)
-            strategy.calculate_signals(historical_event, approx_qty)
-
-        # Evaluate signals on today's Close prices
         new_signals: List[SignalEvent] = []
         close_prices: Dict[str, float] = {}
-
         for event in day_events:
-            current_qty = positions.get(event.symbol, {}).get("qty", 0)
-            signals = strategy.calculate_signals(event, current_qty)
-            new_signals.extend(signals)
             close_prices[event.symbol] = event.close_price
+
+        if not already_evaluated:
+            # Reconstruct strategy internal history to produce correct current signals
+            strategy_id = state.get("strategy_id", "")
+            params = state.get("params", {})
+            strategy = self.strategy_factory(strategy_id, params)
+
+            # Feed history sequentially to pre-warm indicators
+            for i in range(current_index):
+                historical_event = event_stream[i]
+                # Check positions at that moment (we approximate here by passing current)
+                approx_qty = positions.get(historical_event.symbol, {}).get("qty", 0)
+                strategy.calculate_signals(historical_event, approx_qty)
+
+            # Evaluate signals on today's Close prices
+            for event in day_events:
+                current_qty = positions.get(event.symbol, {}).get("qty", 0)
+                signals = strategy.calculate_signals(event, current_qty)
+                new_signals.extend(signals)
+
+            state["last_signal_date"] = date_str
 
         # Sizing logic & queue new OrderEvents
         # Calculate today's NAV
         holdings_value = sum(positions.get(sym, {}).get("qty", 0) * close_prices.get(sym, 0.0) for sym in symbols)
         nav = cash + holdings_value
+
+        # Belt-and-braces duplicate guard: never queue a new order for a
+        # symbol that already has one in flight (computed after fills, so
+        # only genuinely unfilled orders block).
+        if broker_type == "alpaca":
+            pending_symbols = {o.symbol for o in broker.pending_orders.values()}
+        else:
+            pending_symbols = {o.symbol for o in broker.pending_orders}
 
         # Convert signals to orders
         for signal in new_signals:
@@ -583,6 +606,9 @@ class LiveBotService:
             symbol = signal.symbol
             close_price = close_prices.get(symbol, 0.0)
             if close_price <= 0:
+                continue
+            if symbol in pending_symbols:
+                logger.warning(f"Skipping {signal.signal_type} signal for {symbol}: order already pending.")
                 continue
 
             current_qty = positions.get(symbol, {}).get("qty", 0)
@@ -606,6 +632,7 @@ class LiveBotService:
                             quantity=buy_qty,
                             direction="BUY"
                         ))
+                        pending_symbols.add(symbol)
                         notifier.notify(
                             f"📤 <b>Order Placed</b>\n"
                             f"Symbol: {symbol}\n"
@@ -620,6 +647,7 @@ class LiveBotService:
                     quantity=current_qty,
                     direction="SELL"
                 ))
+                pending_symbols.add(symbol)
                 notifier.notify(
                     f"📤 <b>Order Placed (EXIT)</b>\n"
                     f"Symbol: {symbol}\n"

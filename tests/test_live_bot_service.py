@@ -27,6 +27,20 @@ class AlwaysLongStrategy(BaseStrategy):
         return []
 
 
+class FlipFlopStrategy(BaseStrategy):
+    """LONG when flat, EXIT when long — pathological churn generator.
+
+    Re-evaluated on the same bar after each fill, this strategy would trade
+    forever: LONG fills → EXIT queued → EXIT fills → LONG queued → ...
+    Exactly the duplicate-order pathology observed in the live ledger.
+    """
+
+    def calculate_signals(self, event: MarketEvent, current_qty: int) -> List[SignalEvent]:
+        signal_type = "EXIT" if current_qty > 0 else "LONG"
+        return [SignalEvent(symbol=event.symbol, timestamp=event.timestamp,
+                            signal_type=signal_type, strength=0.5)]
+
+
 def write_bars(data_dir, symbol, n_days=30, price=100.0):
     safe = symbol.lower().replace("-", "_")
     with open(os.path.join(data_dir, f"{safe}_daily.csv"), "w") as f:
@@ -41,10 +55,11 @@ class LiveBotServiceTestCase(unittest.TestCase):
         self.data_dir = self._tmp.name
         self.state_file = os.path.join(self.data_dir, "state", "live_bot_state.json")
         write_bars(self.data_dir, "SPY")
+        self.strategy_cls = AlwaysLongStrategy  # tests may override before ticking
         self.service = LiveBotService(
             data_dir=self.data_dir,
             state_file=self.state_file,
-            strategy_factory=lambda sid, params: AlwaysLongStrategy(),
+            strategy_factory=lambda sid, params: self.strategy_cls(),
         )
 
     def tearDown(self):
@@ -140,6 +155,58 @@ class TestTick(LiveBotServiceTestCase):
         self.service.save_state(state)
         result = self.service.tick()
         self.assertFalse(result["active"])
+
+
+class TestSameBarIdempotency(LiveBotServiceTestCase):
+    """Live mode delivers the same daily candle on every scheduler tick
+    (open, close, catch-ups). Signals must be evaluated once per bar."""
+
+    def _live_bar(self):
+        from datetime import datetime
+        return MarketEvent(
+            timestamp=datetime(2024, 2, 1), symbol="SPY",
+            open_price=100.0, high_price=101.0, low_price=99.0,
+            close_price=100.0, volume=1_000_000,
+        )
+
+    def test_repeated_live_bar_does_not_churn_orders(self):
+        self.strategy_cls = FlipFlopStrategy
+        with patch("src.live_bot.LiveDataProvider") as MockProvider:
+            MockProvider.return_value.get_latest_bars.return_value = [self._live_bar()]
+            self._start(live_mode=True)
+
+            state1 = self.service.tick()  # evaluates bar → queues LONG
+            self.assertEqual(len(state1["pending_orders"]), 1)
+            self.assertEqual(state1["trade_log"], [])
+            self.assertEqual(state1["last_signal_date"], "2024-02-01")
+
+            state2 = self.service.tick()  # same bar: fills, must NOT re-signal
+            self.assertEqual(len(state2["trade_log"]), 1)
+            self.assertEqual(state2["pending_orders"], [])
+
+            state3 = self.service.tick()  # same bar again: fully idempotent
+            self.assertEqual(len(state3["trade_log"]), 1)
+            self.assertEqual(state3["pending_orders"], [])
+
+    def test_new_bar_date_is_evaluated_again(self):
+        self.strategy_cls = AlwaysLongStrategy
+        with patch("src.live_bot.LiveDataProvider") as MockProvider:
+            MockProvider.return_value.get_latest_bars.return_value = [self._live_bar()]
+            self._start(live_mode=True)
+            self.service.tick()  # queues LONG for Feb 1
+
+            # Next trading day's candle arrives
+            from datetime import datetime
+            next_bar = MarketEvent(
+                timestamp=datetime(2024, 2, 2), symbol="SPY",
+                open_price=102.0, high_price=103.0, low_price=101.0,
+                close_price=102.0, volume=1_000_000,
+            )
+            MockProvider.return_value.get_latest_bars.return_value = [next_bar]
+            state = self.service.tick()
+            # Feb 1 order filled at Feb 2 open, and Feb 2 was evaluated
+            self.assertEqual(len(state["trade_log"]), 1)
+            self.assertEqual(state["last_signal_date"], "2024-02-02")
 
 
 class TestCalculateMetrics(unittest.TestCase):
