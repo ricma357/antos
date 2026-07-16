@@ -37,9 +37,6 @@ class StartBotRequest(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict)
     live_mode: bool = Field(default=False)
     broker_type: str = Field(default="simulated")
-    alpaca_api_key: Optional[str] = None
-    alpaca_api_secret: Optional[str] = None
-    alpaca_base_url: Optional[str] = None
 
 # --- Helper Functions for Persistence ---
 def load_bot_state() -> Dict[str, Any]:
@@ -47,7 +44,12 @@ def load_bot_state() -> Dict[str, Any]:
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, "r") as f:
-                    return json.load(f)
+                    state = json.load(f)
+                # Scrub credentials persisted by older versions of the app —
+                # they now live exclusively in environment variables.
+                for legacy_key in ("alpaca_api_key", "alpaca_api_secret", "alpaca_base_url"):
+                    state.pop(legacy_key, None)
+                return state
             except Exception as e:
                 logger.error(f"Failed to read state file: {e}")
         
@@ -71,9 +73,6 @@ def load_bot_state() -> Dict[str, Any]:
             "scheduler_active": False,
             "scheduler_interval": 86400,
             "broker_type": "simulated",
-            "alpaca_api_key": None,
-            "alpaca_api_secret": None,
-            "alpaca_base_url": None,
             "metrics": {
                 "total_return_pct": 0.0,
                 "ann_return_pct": 0.0,
@@ -333,7 +332,19 @@ def start_bot(req: StartBotRequest):
     state = load_bot_state()
     if state.get("active"):
         raise HTTPException(status_code=400, detail="Trading bot is already active. Stop or reset it first.")
-        
+
+    # Alpaca credentials must be configured server-side — never sent via the API.
+    if req.broker_type == "alpaca" and not (
+        os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_API_SECRET")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Alpaca broker requires ALPACA_API_KEY and ALPACA_API_SECRET "
+                "environment variables to be set on the server."
+            ),
+        )
+
     # Verify symbols data exist
     for sym in req.symbols:
         safe_name = sym.lower().replace('-', '_')
@@ -372,9 +383,6 @@ def start_bot(req: StartBotRequest):
     state["peak_equity"] = req.initial_cash
     state["live_mode"] = req.live_mode
     state["broker_type"] = req.broker_type
-    state["alpaca_api_key"] = req.alpaca_api_key
-    state["alpaca_api_secret"] = req.alpaca_api_secret
-    state["alpaca_base_url"] = req.alpaca_base_url
     state["metrics"] = {
         "total_return_pct": 0.0,
         "ann_return_pct": 0.0,
@@ -530,11 +538,9 @@ def _execute_tick():
     broker_type = state.get("broker_type", "simulated")
     if broker_type == "alpaca":
         from src.execution.paper_broker import AlpacaPaperBroker
-        broker = AlpacaPaperBroker(
-            api_key=state.get("alpaca_api_key"),
-            api_secret=state.get("alpaca_api_secret"),
-            base_url=state.get("alpaca_base_url")
-        )
+        # Credentials are read from ALPACA_API_KEY / ALPACA_API_SECRET /
+        # ALPACA_BASE_URL environment variables — never from the API or state file.
+        broker = AlpacaPaperBroker()
     else:
         commission_rate = state.get("commission_rate", 0.001)
         slippage_rate = state.get("slippage_rate", 0.0005)

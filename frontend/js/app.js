@@ -370,10 +370,7 @@ async function onStartBot(e) {
         slippage_rate: 0.0005,
         params: params,
         live_mode: document.getElementById('bot-live-mode').checked,
-        broker_type: document.getElementById('bot-broker-select').value,
-        alpaca_api_key: document.getElementById('bot-alpaca-key').value || null,
-        alpaca_api_secret: document.getElementById('bot-alpaca-secret').value || null,
-        alpaca_base_url: null
+        broker_type: document.getElementById('bot-broker-select').value
     };
     
     try {

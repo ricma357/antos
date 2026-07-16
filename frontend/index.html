@@ -197,12 +197,11 @@
                                 </select>
                             </div>
                             <div class="form-group alpaca-creds hidden">
-                                <label for="bot-alpaca-key">Alpaca API Key ID</label>
-                                <input type="text" id="bot-alpaca-key" placeholder="Enter Key ID...">
-                            </div>
-                            <div class="form-group alpaca-creds hidden">
-                                <label for="bot-alpaca-secret">Alpaca Secret Key</label>
-                                <input type="password" id="bot-alpaca-secret" placeholder="Enter Secret...">
+                                <p style="font-size: 0.85em; opacity: 0.8; margin: 0;">
+                                    Alpaca credentials are read from the server's
+                                    <code>ALPACA_API_KEY</code> and <code>ALPACA_API_SECRET</code>
+                                    environment variables. They are never sent through the browser.
+                                </p>
                             </div>
                         </div>
 
