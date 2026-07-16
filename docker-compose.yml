@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  antos-api:
+    build: .
+    container_name: antos_server
+    # Keep container running and restart automatically on failures or docker daemon startup
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Map the current directory to /app in the container for hot-reloading
+      - ./:/app
+    command: ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      - TZ=UTC

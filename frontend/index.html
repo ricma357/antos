@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antos Trading Dashboard</title>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="/css/dashboard.css">
+    
+    <!-- TradingView Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">▲</span>
+                    <h2>Antos</h2>
+                </div>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#backtest" class="nav-item active" data-view="backtest">⚙️ Backtest Engine</a></li>
+                <li><a href="#results" class="nav-item" data-view="results">📈 Chart & Metrics</a></li>
+                <li><a href="#trades" class="nav-item" data-view="trades">🧾 Trade Log</a></li>
+                <li><a href="#bot" class="nav-item" data-view="bot">🤖 Live Trading Bot</a></li>
+            </ul>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            
+            <!-- Toast Notifications -->
+            <div id="toast-container" class="toast-container"></div>
+
+            <!-- View: Run Backtest -->
+            <section id="view-backtest" class="view active">
+                <div class="header">
+                    <h1>Backtest Configuration</h1>
+                    <p>Configure and execute quantitative strategies against historical data.</p>
+                </div>
+                
+                <div class="card configuration-card">
+                    <form id="backtest-form">
+                        
+                        <div class="form-section">
+                            <h3>Environment</h3>
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="env-symbols">Symbols (comma separated)</label>
+                                    <input type="text" id="env-symbols" value="BTC-USD,SPY" required>
+                                    <small id="available-symbols-hint" class="hint"></small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="env-cash">Initial Capital ($)</label>
+                                    <input type="number" id="env-cash" value="100000" step="1000" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="env-commission">Commission Rate</label>
+                                    <input type="number" id="env-commission" value="0.001" step="0.0001" required>
+                                    <small class="hint">0.001 = 0.1% fee per trade</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="env-slippage">Slippage Rate</label>
+                                    <input type="number" id="env-slippage" value="0.0005" step="0.0001" required>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-section">
+                            <h3>Strategy Selection</h3>
+                            <div class="form-group">
+                                <label for="strategy-select">Algorithm</label>
+                                <select id="strategy-select" required>
+                                    <option value="" disabled selected>Loading strategies...</option>
+                                </select>
+                            </div>
+                            
+                            <!-- Dynamically injected parameters based on selected strategy -->
+                            <div id="strategy-params-container" class="form-grid"></div>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="btn-run-backtest">
+                                <span class="btn-text">Execute Backtest</span>
+                                <span class="loader hidden"></span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- View: Results -->
+            <section id="view-results" class="view">
+                <div class="header flex-header">
+                    <div>
+                        <h1 id="results-strategy-title">Performance Results</h1>
+                        <p id="results-date-range" class="date-range"></p>
+                        <p>Visual analysis of equity growth and risk metrics.</p>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="btn-clear-results">Clear Results</button>
+                </div>
+                
+                <!-- Metrics Summary Cards -->
+                <div class="metrics-grid" id="metrics-container">
+                    <!-- Rendered by JS -->
+                </div>
+
+                <div class="charts-container">
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3>Equity Curve</h3>
+                        </div>
+                        <div id="chart-equity" class="tv-chart"></div>
+                    </div>
+                    
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3>Drawdown</h3>
+                        </div>
+                        <div id="chart-drawdown" class="tv-chart drawdown-chart"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- View: Trade Log -->
+            <section id="view-trades" class="view">
+                <div class="header">
+                    <h1>Trade Log</h1>
+                    <p>Detailed execution ledger and realized P&L.</p>
+                </div>
+                
+                <div class="card table-card">
+                    <div class="table-responsive">
+                        <table id="trade-table" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Symbol</th>
+                                    <th>Side</th>
+                                    <th class="text-right">Qty</th>
+                                    <th class="text-right">Price</th>
+                                    <th class="text-right">Fee</th>
+                                    <th class="text-right">NAV After</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trade-table-body">
+                                <!-- Rendered by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- View: Live Bot -->
+            <section id="view-bot" class="view">
+                <div class="header flex-header">
+                    <div>
+                        <h1>🤖 Live Trading Bot Monitor</h1>
+                        <p>Track execution metrics, open positions, and quantitative insights in real-time.</p>
+                    </div>
+                    <div id="bot-status-indicator" class="status-indicator">
+                        <span class="status-dot inactive"></span>
+                        <span id="bot-status-text">INACTIVE</span>
+                    </div>
+                </div>
+
+                <!-- Bot Config / Control Panel -->
+                <div class="card bot-control-card">
+                    <form id="bot-config-form">
+                        <div class="form-grid" id="bot-config-inputs">
+                            <div class="form-group">
+                                <label for="bot-strategy-select">Algorithm</label>
+                                <select id="bot-strategy-select" required>
+                                    <option value="" disabled selected>Select strategy...</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="bot-symbols">Symbols (comma separated)</label>
+                                <input type="text" id="bot-symbols" value="BTC-USD,SPY" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="bot-cash">Starting Capital ($)</label>
+                                <input type="number" id="bot-cash" value="100000" step="1000" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="bot-broker-select">Execution Broker</label>
+                                <select id="bot-broker-select" required>
+                                    <option value="simulated" selected>Simulated Broker</option>
+                                    <option value="alpaca">Alpaca Paper API</option>
+                                </select>
+                            </div>
+                            <div class="form-group alpaca-creds hidden">
+                                <label for="bot-alpaca-key">Alpaca API Key ID</label>
+                                <input type="text" id="bot-alpaca-key" placeholder="Enter Key ID...">
+                            </div>
+                            <div class="form-group alpaca-creds hidden">
+                                <label for="bot-alpaca-secret">Alpaca Secret Key</label>
+                                <input type="password" id="bot-alpaca-secret" placeholder="Enter Secret...">
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="flex-direction: row; align-items: center; gap: 10px; margin-top: 16px; display: flex;">
+                            <input type="checkbox" id="bot-live-mode" style="width: auto; margin: 0; cursor: pointer;">
+                            <label for="bot-live-mode" style="cursor: pointer; user-select: none; font-weight: 500;">Live Data Mode (Fetch real-time daily prices from Yahoo Finance)</label>
+                        </div>
+
+                        <!-- Dynamic strategy parameter fields will load here -->
+                        <div id="bot-strategy-params" class="form-grid" style="margin-top: 16px;"></div>
+
+                        <div class="form-actions bot-actions" style="margin-top: 20px;">
+                            <button type="submit" class="btn btn-primary" id="btn-start-bot">Start Bot</button>
+                            <button type="button" class="btn btn-danger hidden" id="btn-stop-bot">Stop Bot</button>
+                            <button type="button" class="btn btn-secondary hidden" id="btn-tick-bot">Trigger Daily Tick</button>
+                            <button type="button" class="btn btn-secondary" id="btn-reset-bot">Reset State</button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Live Market Insights -->
+                <div class="card insights-card" id="bot-insights-card" style="margin-top: 24px;">
+                    <div class="card-header">
+                        <h3>Market Insights & Actionable Signals</h3>
+                    </div>
+                    <div class="card-body" style="padding: 16px;">
+                        <ul id="bot-insights-list" class="insights-list">
+                            <!-- Injected by JS -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Automated Trading Scheduler -->
+                <div class="card scheduler-card hidden" id="bot-scheduler-card" style="margin-top: 24px;">
+                    <div class="card-header">
+                        <h3>⏱️ Automated Trading Scheduler</h3>
+                    </div>
+                    <div class="card-body" style="padding: 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                        <div class="form-group" style="margin: 0; min-width: 200px;">
+                            <label for="scheduler-interval-input">Interval (Seconds)</label>
+                            <input type="number" id="scheduler-interval-input" value="86400" min="5" step="5">
+                        </div>
+                        <button type="button" class="btn btn-primary" id="btn-start-scheduler" style="margin-top: auto;">Start Scheduler</button>
+                        <button type="button" class="btn btn-danger hidden" id="btn-stop-scheduler" style="margin-top: auto;">Stop Scheduler</button>
+                        <div id="scheduler-status-indicator" class="status-indicator" style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+                            <span class="status-dot inactive" id="scheduler-status-dot"></span>
+                            <span id="scheduler-status-text" style="font-weight: 500;">SCHEDULER: INACTIVE</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Performance Metrics -->
+                <div class="metrics-grid" id="bot-metrics-container" style="margin-top: 24px;">
+                    <!-- Injected by JS -->
+                </div>
+
+                <!-- Live Graphs -->
+                <div class="charts-container" style="margin-top: 24px;">
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3>Live Portfolio Equity Curve</h3>
+                        </div>
+                        <div id="chart-bot-equity" class="tv-chart"></div>
+                    </div>
+                    
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3>Live Portfolio Drawdown</h3>
+                        </div>
+                        <div id="chart-bot-drawdown" class="tv-chart drawdown-chart"></div>
+                    </div>
+                </div>
+
+                <!-- Open Positions & Realized Trades -->
+                <div class="form-grid" style="margin-top: 24px; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); align-items: start;">
+                    <!-- Open Positions Card -->
+                    <div class="card table-card">
+                        <div class="card-header">
+                            <h3>Active Positions</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table" id="bot-positions-table">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th class="text-right">Shares</th>
+                                        <th class="text-right">Avg Cost</th>
+                                        <th class="text-right">Unrealized P&L</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bot-positions-body">
+                                    <!-- Injected by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Bot Realized Trades -->
+                    <div class="card table-card">
+                        <div class="card-header">
+                            <h3>Realized Trade Ledger</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table" id="bot-ledger-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Symbol</th>
+                                        <th>Side</th>
+                                        <th class="text-right">Price</th>
+                                        <th class="text-right">Realized P&L</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bot-ledger-body">
+                                    <!-- Injected by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="/js/app.js?v=3"></script>
+</body>
+</html>

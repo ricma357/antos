@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Generated outputs
+data/*.png
+data/trade_journal.db
+
+# Runtime state (may contain broker credentials)
+data/live_bot_state.json
+
+# Scratch / experiments
+scratch/
