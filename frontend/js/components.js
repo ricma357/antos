@@ -280,3 +280,81 @@ export function buildBotStrategyForm(strategySchema) {
         `;
     });
 }
+
+export function renderBotTelemetry(state) {
+    const guardrailsEl = document.getElementById('bot-guardrails');
+    const healthBody = document.getElementById('bot-health-body');
+    const pendingBody = document.getElementById('bot-pending-body');
+    if (!guardrailsEl || !healthBody || !pendingBody) return;
+
+    // ── Guardrail status pills ────────────────────────────────────────
+    const g = state.guardrails || {};
+    const ddHalted = !!g.drawdown_halted;
+    const blocked = g.hit_rate_blocked || [];
+    const ddPct = g.drawdown_pct != null ? g.drawdown_pct : 0.0;
+    const ddLimit = g.drawdown_halt_limit_pct != null ? g.drawdown_halt_limit_pct : 15.0;
+    // How much of the breaker budget is used (0-100%)
+    const ddUsage = ddLimit > 0 ? Math.min(100, Math.abs(ddPct) / ddLimit * 100) : 0;
+    const usageClass = ddUsage >= 100 ? 'tripped' : (ddUsage >= 66 ? 'warn' : 'ok');
+
+    guardrailsEl.innerHTML = `
+        <div class="guardrail-pill ${ddHalted ? 'tripped' : 'ok'}">
+            <span class="pill-icon">${ddHalted ? '🛑' : '🟢'}</span>
+            <span>Drawdown breaker: <strong>${ddHalted ? 'TRIPPED — entries halted' : 'Armed'}</strong></span>
+        </div>
+        <div class="guardrail-meter">
+            <div class="meter-label">
+                Drawdown ${ddPct.toFixed(1)}% of −${ddLimit.toFixed(0)}% limit
+            </div>
+            <div class="meter-track">
+                <div class="meter-fill ${usageClass}" style="width: ${ddUsage.toFixed(0)}%"></div>
+            </div>
+        </div>
+        <div class="guardrail-pill ${blocked.length ? 'tripped' : 'ok'}">
+            <span class="pill-icon">${blocked.length ? '🛑' : '🟢'}</span>
+            <span>Hit-rate kill switch: <strong>${blocked.length ? 'BLOCKING ' + blocked.join(', ') : 'Clear'}</strong></span>
+        </div>
+    `;
+
+    // ── Model health table ────────────────────────────────────────────
+    const health = state.model_health || {};
+    const symbols = Object.keys(health);
+    if (symbols.length === 0) {
+        healthBody.innerHTML = '<tr><td colspan="4" class="empty-cell">Awaiting first evaluated tick…</td></tr>';
+    } else {
+        healthBody.innerHTML = symbols.map(sym => {
+            const h = health[sym] || {};
+            const regime = h.regime || 'UNKNOWN';
+            const regimeClass = regime === 'BULL' ? 'regime-bull' : (regime === 'BEAR' ? 'regime-bear' : 'regime-unknown');
+            const rate = h.hit_rate_pct;
+            let rateHtml = '<span class="muted">n/a — too few calls</span>';
+            if (rate != null) {
+                const rateClass = rate >= 52 ? 'profit' : (rate < 45 ? 'loss' : '');
+                rateHtml = `<span class="${rateClass}">${rate.toFixed(1)}%</span>`;
+            }
+            const isBlocked = blocked.includes(sym);
+            const entryStatus = isBlocked
+                ? '<span class="loss">BLOCKED</span>'
+                : (ddHalted ? '<span class="loss">HALTED (breaker)</span>' : '<span class="profit">ENABLED</span>');
+            return `<tr>
+                <td><strong>${sym}</strong></td>
+                <td><span class="regime-badge ${regimeClass}">${regime}</span></td>
+                <td>${rateHtml}</td>
+                <td>${entryStatus}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // ── Pending orders table ──────────────────────────────────────────
+    const pending = state.pending_orders || [];
+    if (pending.length === 0) {
+        pendingBody.innerHTML = '<tr><td colspan="4" class="empty-cell">No orders queued</td></tr>';
+    } else {
+        pendingBody.innerHTML = pending.map(o => `<tr>
+            <td><strong>${o.symbol}</strong></td>
+            <td><span class="${o.direction === 'BUY' ? 'profit' : 'loss'}">${o.direction}</span></td>
+            <td>${o.quantity}</td>
+            <td>${o.order_type || 'MKT'}</td>
+        </tr>`).join('');
+    }
+}

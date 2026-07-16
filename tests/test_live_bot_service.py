@@ -289,6 +289,20 @@ class TestGuardrails(LiveBotServiceTestCase):
         self.assertEqual(state["guardrails"]["hit_rate_blocked"], [])
         self.assertEqual(len(state["pending_orders"]), 1)
 
+    def test_model_health_exported_to_state(self):
+        class HealthyStrategy(AlwaysLongStrategy):
+            def get_hit_rate(self, symbol, window=None):
+                return 0.60
+
+            def get_regime(self, symbol):
+                return "BULL"
+
+        self.strategy_cls = HealthyStrategy
+        self._start()
+        state = self.service.tick()
+        self.assertEqual(state["model_health"]["SPY"],
+                         {"regime": "BULL", "hit_rate_pct": 60.0})
+
     def test_diagnostics_persist_across_ticks(self):
         recorded = {}
 

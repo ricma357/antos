@@ -9,8 +9,9 @@ import {
     renderBotInsights,
     renderBotPositions,
     renderBotLedger,
+    renderBotTelemetry,
     buildBotStrategyForm
-} from './components.js?v=2';
+} from './components.js?v=3';
 
 let availableStrategies = [];
 let botPollTimer = null;
@@ -246,6 +247,13 @@ async function updateBotUI() {
                 brokerSelect.value = state.broker_type || 'simulated';
             }
             
+            // Telemetry card: guardrails, model health, pending orders
+            const telemetryCard = document.getElementById('bot-telemetry-card');
+            if (telemetryCard) {
+                telemetryCard.classList.remove('hidden');
+                renderBotTelemetry(state);
+            }
+
             // Show and render scheduler details
             if (schedulerCard) {
                 schedulerCard.classList.remove('hidden');
@@ -258,7 +266,14 @@ async function updateBotUI() {
                 
                 if (state.scheduler_active) {
                     schedDot.className = 'status-dot active';
-                    schedText.textContent = `SCHEDULER: RUNNING (Every ${state.scheduler_interval}s)`;
+                    if (state.scheduler_interval === 'market_clock') {
+                        const nextRun = state.next_run_time
+                            ? new Date(state.next_run_time).toLocaleString()
+                            : 'computing…';
+                        schedText.textContent = `SCHEDULER: MARKET CLOCK (09:40 & 15:50 ET) — next: ${nextRun}`;
+                    } else {
+                        schedText.textContent = `SCHEDULER: RUNNING (Every ${state.scheduler_interval}s)`;
+                    }
                     startSchedBtn.classList.add('hidden');
                     stopSchedBtn.classList.remove('hidden');
                     if (schedIntervalInput) {
@@ -292,6 +307,10 @@ async function updateBotUI() {
             }
             if (schedulerCard) {
                 schedulerCard.classList.add('hidden');
+            }
+            const telemetryCard = document.getElementById('bot-telemetry-card');
+            if (telemetryCard) {
+                telemetryCard.classList.add('hidden');
             }
         }
         

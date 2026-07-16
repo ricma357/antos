@@ -234,6 +234,52 @@
                     </div>
                 </div>
 
+                <!-- Bot Telemetry: guardrails, model health, pending orders -->
+                <div class="card hidden" id="bot-telemetry-card" style="margin-top: 24px;">
+                    <div class="card-header">
+                        <h3>🛡️ Bot Telemetry — Guardrails & Model Health</h3>
+                    </div>
+                    <div class="card-body" style="padding: 16px;">
+                        <div id="bot-guardrails" class="guardrails-row">
+                            <!-- Injected by JS -->
+                        </div>
+                        <div class="telemetry-grid" style="margin-top: 16px;">
+                            <div>
+                                <h4 class="telemetry-subtitle">Model Health (per symbol)</h4>
+                                <table class="data-table" id="bot-health-table">
+                                    <thead>
+                                        <tr>
+                                            <th>SYMBOL</th>
+                                            <th>REGIME</th>
+                                            <th>ROLLING HIT RATE</th>
+                                            <th>ENTRY STATUS</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="bot-health-body">
+                                        <!-- Injected by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div>
+                                <h4 class="telemetry-subtitle">Pending Orders (fill at next open)</h4>
+                                <table class="data-table" id="bot-pending-table">
+                                    <thead>
+                                        <tr>
+                                            <th>SYMBOL</th>
+                                            <th>SIDE</th>
+                                            <th>QUANTITY</th>
+                                            <th>TYPE</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="bot-pending-body">
+                                        <!-- Injected by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Automated Trading Scheduler -->
                 <div class="card scheduler-card hidden" id="bot-scheduler-card" style="margin-top: 24px;">
                     <div class="card-header">
@@ -328,6 +374,6 @@
     </div>
 
     <!-- Scripts -->
-    <script type="module" src="/js/app.js?v=3"></script>
+    <script type="module" src="/js/app.js?v=4"></script>
 </body>
 </html>

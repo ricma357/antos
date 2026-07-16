@@ -447,3 +447,109 @@ input:focus, select:focus {
     transform: translateY(-1px);
 }
 
+
+/* ── Bot Telemetry: guardrails, model health, pending orders ────────── */
+.guardrails-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.guardrail-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 0.85rem;
+}
+
+.guardrail-pill.ok { border-color: rgba(16, 185, 129, 0.4); }
+.guardrail-pill.tripped {
+    border-color: rgba(239, 68, 68, 0.6);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.guardrail-meter {
+    flex: 1;
+    min-width: 220px;
+}
+
+.meter-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.meter-track {
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.meter-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+
+.meter-fill.ok { background: var(--profit-gradient); }
+.meter-fill.warn { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+.meter-fill.tripped { background: var(--loss-gradient); }
+
+.telemetry-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+}
+
+@media (max-width: 900px) {
+    .telemetry-grid { grid-template-columns: 1fr; }
+}
+
+.telemetry-subtitle {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.regime-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+.regime-bull {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.regime-bear {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.regime-unknown {
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+}
+
+.empty-cell {
+    text-align: center;
+    padding: 16px;
+    color: var(--text-muted);
+}
+
+.muted { color: var(--text-muted); }

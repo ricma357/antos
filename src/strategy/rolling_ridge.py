@@ -224,6 +224,10 @@ class RollingRidgeDirectionalPredictor(BaseStrategy):
             for sym, hits in diagnostics.get("hit_history", {}).items()
         }
 
+    def get_regime(self, symbol: str) -> str:
+        """Public accessor for the symbol's current macro regime."""
+        return self._compute_regime(symbol)
+
     def get_hit_rate(self, symbol: str, window: int = None) -> float:
         """
         Fraction of resolved directional calls that got the sign right.

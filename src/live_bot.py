@@ -605,6 +605,20 @@ class LiveBotService:
             state["last_signal_date"] = date_str
             state["strategy_diagnostics"] = strategy.export_diagnostics()
 
+            # ── Model health telemetry for the dashboard ────────────────
+            get_hit_rate_fn = getattr(strategy, "get_hit_rate", None)
+            get_regime_fn = getattr(strategy, "get_regime", None)
+            model_health = {}
+            for sym in symbols:
+                entry: Dict[str, Any] = {}
+                if get_regime_fn is not None:
+                    entry["regime"] = get_regime_fn(sym)
+                if get_hit_rate_fn is not None:
+                    rate = get_hit_rate_fn(sym, window=self.HIT_RATE_WINDOW)
+                    entry["hit_rate_pct"] = round(rate * 100, 1) if rate is not None else None
+                model_health[sym] = entry
+            state["model_health"] = model_health
+
             # ── Guardrail: rolling hit-rate kill switch ─────────────────
             # If the model's recent directional accuracy on a symbol is
             # materially worse than a coin flip, stop opening new positions
