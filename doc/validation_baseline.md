@@ -96,6 +96,43 @@ Inverse-volatility weighting (risk parity) was scoped out for now:
 with ~50% hit rates, sizing refinements can't add much until entry
 quality improves; revisit after #17/#18.
 
+## Independence / crowding analysis (2026-07-17)
+
+`validate_strategy.py` now regresses strategy daily returns on the
+buy-and-hold benchmark (`r_s = alpha + beta·r_b`) and reports a
+half-sample alpha split — the classic crowding tell is alpha decaying
+over time as a signal gets arbitraged away.
+
+Shipped configuration:
+
+| | Bull 2020–2026 | Crisis 2006–2012 |
+|---|---|---|
+| beta | 0.314 | 0.259 |
+| ann. alpha | +8.27% | +2.94% |
+| correlation (R²) | 0.665 (0.443) | 0.526 (0.277) |
+| alpha, first half | +13.83% | +1.05% |
+| alpha, second half | +2.07% | +1.54% |
+
+**Read:** the bot is *not* repackaged market exposure — beta ~0.3 and
+less than half the variance is benchmark-explained. Its returns come
+from *when it is in vs. out*, which is the part standard AI-generated
+bots don't do (they stay invested).
+
+**The flag:** bull-period alpha collapses from +13.8% to +2.1% in the
+recent half. Before calling that crowding, note the regime mix: the
+first half contains 2020 and 2022 (two storms, where a defensive
+strategy earns everything), the second half is a grinding bull (where
+cash-sheltering only costs carry). The crisis period shows the
+*opposite* pattern (alpha stable/rising across halves), which supports
+regime-mix over signal-decay as the explanation. This is the expected
+return profile of a defensive trend strategy: long quiet stretches of
+~zero alpha punctuated by large crisis payoffs.
+
+**Standing rule:** re-run this analysis after every data refresh. The
+falsifiable crowding signal would be *crisis-like periods where the
+alpha fails to show up* — not quiet bulls where there is nothing to
+defend against.
+
 ## Falsified experiments
 
 ### Regime-filter hysteresis (2026-07-17) — kept at b=0

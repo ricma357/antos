@@ -3,7 +3,14 @@ from datetime import datetime
 
 import pandas as pd
 
-from src.validation import slice_metrics, yearly_breakdown, comparison_table
+from src.validation import (
+    slice_metrics,
+    yearly_breakdown,
+    comparison_table,
+    alpha_beta,
+    edge_decay,
+    TRADING_DAYS,
+)
 from src.strategy.buy_and_hold import BuyAndHold
 from src.events import MarketEvent
 
@@ -68,6 +75,69 @@ class TestComparisonTable(unittest.TestCase):
         lines = comparison_table(strat, bench)
         labels = [line.split()[0] for line in lines[2:]]
         self.assertEqual(labels, ["FULL", "2023", "2024"])
+
+
+def curve_from_returns(returns, start=100_000.0):
+    """Builds an equity DataFrame from a list of daily returns."""
+    dates = pd.bdate_range("2023-01-02", periods=len(returns) + 1)
+    values = [start]
+    for r in returns:
+        values.append(values[-1] * (1 + r))
+    return pd.DataFrame({'Equity': values}, index=dates)
+
+
+class TestAlphaBeta(unittest.TestCase):
+    def test_identical_curves_beta_one_alpha_zero(self):
+        rb = [0.01, -0.01, 0.02, -0.005] * 20
+        bench = curve_from_returns(rb)
+        strat = curve_from_returns(rb)
+        stats = alpha_beta(strat, bench)
+        self.assertAlmostEqual(stats['beta'], 1.0, places=6)
+        self.assertAlmostEqual(stats['alpha_ann_pct'], 0.0, places=6)
+        self.assertAlmostEqual(stats['correlation'], 1.0, places=6)
+
+    def test_half_beta_plus_drift_recovered(self):
+        rb = [0.01, -0.01, 0.02, -0.005] * 20
+        drift = 0.0004
+        rs = [0.5 * r + drift for r in rb]
+        stats = alpha_beta(curve_from_returns(rs), curve_from_returns(rb))
+        self.assertAlmostEqual(stats['beta'], 0.5, places=6)
+        self.assertAlmostEqual(stats['alpha_ann_pct'],
+                               drift * TRADING_DAYS * 100, places=4)
+
+    def test_uncorrelated_strategy_low_r_squared(self):
+        rb = ([0.01, -0.01] * 40)
+        rs = ([0.0, 0.0, 0.01, -0.01] * 20)  # different rhythm
+        stats = alpha_beta(curve_from_returns(rs), curve_from_returns(rb))
+        self.assertLess(abs(stats['beta']), 0.6)
+        self.assertLess(stats['r_squared'], 0.5)
+
+    def test_flat_benchmark_guarded(self):
+        bench = curve_from_returns([0.0] * 80)
+        strat = curve_from_returns([0.01, -0.01] * 40)
+        stats = alpha_beta(strat, bench)
+        self.assertEqual(stats['beta'], 0.0)
+
+    def test_too_few_days_returns_zeros(self):
+        bench = curve_from_returns([0.01] * 5)
+        stats = alpha_beta(bench, bench)
+        self.assertEqual(stats['n_days'], 5)
+        self.assertEqual(stats['beta'], 0.0)
+
+
+class TestEdgeDecay(unittest.TestCase):
+    def test_decaying_alpha_visible_in_halves(self):
+        rb = [0.01, -0.01] * 60
+        # Drift only in the first half — a "signal that got arbitraged away"
+        rs = [r + (0.001 if i < 60 else 0.0) for i, r in enumerate(rb)]
+        halves = edge_decay(curve_from_returns(rs), curve_from_returns(rb))
+        self.assertEqual(len(halves), 2)
+        self.assertGreater(halves[0]['alpha_ann_pct'],
+                           halves[1]['alpha_ann_pct'] + 5.0)
+
+    def test_short_sample_returns_empty(self):
+        bench = curve_from_returns([0.01] * 10)
+        self.assertEqual(edge_decay(bench, bench), [])
 
 
 class TestBuyAndHold(unittest.TestCase):

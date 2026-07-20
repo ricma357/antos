@@ -21,7 +21,7 @@ from src.engine import BacktestEngine
 from src.execution.sim_broker import SimulatedBroker
 from src.strategy.buy_and_hold import BuyAndHold
 from src.strategy.rolling_ridge import RollingRidgeDirectionalPredictor
-from src.validation import comparison_table
+from src.validation import comparison_table, alpha_beta, edge_decay
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
@@ -80,6 +80,18 @@ def main():
           f"(round trips: {result.metrics.get('num_round_trips', 0)}, "
           f"win rate: {result.metrics.get('win_rate_pct', 0.0):.1f}%)")
     print(f"Benchmark trades: {benchmark.metrics['num_trades']}")
+
+    # ── Independence / crowding analysis ──────────────────────────────
+    # beta ≈ 1 with high R² = repackaged market exposure (the crowd).
+    # Positive alpha with low beta = return the benchmark can't explain.
+    stats = alpha_beta(result.equity_df, benchmark.equity_df)
+    print(f"\nIndependence vs benchmark ({stats['n_days']} common days):")
+    print(f"  beta:        {stats['beta']:>7.3f}   (1.0 = fully market-driven)")
+    print(f"  ann. alpha:  {stats['alpha_ann_pct']:>+7.2f}%  (residual edge)")
+    print(f"  correlation: {stats['correlation']:>7.3f}   (R² = {stats['r_squared']:.3f})")
+    for half in edge_decay(result.equity_df, benchmark.equity_df):
+        print(f"  {half['label']} ({half['start']} → {half['end']}): "
+              f"alpha {half['alpha_ann_pct']:+.2f}%, beta {half['beta']:.3f}")
 
     # Directional hit rate, if the strategy tracks prediction diagnostics
     if hasattr(strategy, "get_hit_rate"):

@@ -8,7 +8,7 @@ without beating or matching both the benchmark and the previous baseline
 here.
 """
 
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -57,6 +57,82 @@ def yearly_breakdown(equity_df: pd.DataFrame) -> Dict[int, Dict[str, float]]:
         if len(year_slice) >= 2:
             breakdown[int(year)] = slice_metrics(year_slice)
     return breakdown
+
+
+def _aligned_daily_returns(strategy_df: pd.DataFrame,
+                           benchmark_df: pd.DataFrame):
+    """Daily return series of both curves restricted to their common dates."""
+    joined = pd.DataFrame({
+        'strategy': strategy_df['Equity'],
+        'benchmark': benchmark_df['Equity'],
+    }).dropna()
+    returns = joined.pct_change().dropna()
+    return returns['strategy'], returns['benchmark']
+
+
+def alpha_beta(strategy_df: pd.DataFrame,
+               benchmark_df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Independence analysis: how much of the strategy is just the market?
+
+    Regresses strategy daily returns on benchmark daily returns:
+        r_s = alpha + beta * r_b + residual
+
+    beta ~ 1 with high R² means the strategy is repackaged benchmark
+    exposure — the crowd. Meaningful positive alpha with low beta is
+    return the benchmark cannot explain.
+    """
+    rs, rb = _aligned_daily_returns(strategy_df, benchmark_df)
+    n = len(rs)
+    if n < 20:
+        return {'beta': 0.0, 'alpha_ann_pct': 0.0, 'correlation': 0.0,
+                'r_squared': 0.0, 'n_days': n}
+
+    var_b = rb.var()
+    if var_b <= 0:
+        return {'beta': 0.0, 'alpha_ann_pct': 0.0, 'correlation': 0.0,
+                'r_squared': 0.0, 'n_days': n}
+
+    beta = rs.cov(rb) / var_b
+    alpha_daily = rs.mean() - beta * rb.mean()
+    correlation = rs.corr(rb)
+
+    return {
+        'beta': beta,
+        'alpha_ann_pct': alpha_daily * TRADING_DAYS * 100,
+        'correlation': correlation,
+        'r_squared': correlation ** 2,
+        'n_days': n,
+    }
+
+
+def edge_decay(strategy_df: pd.DataFrame,
+               benchmark_df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """
+    Crowding tell: a signal that is being arbitraged away shows alpha
+    decaying over time (McLean & Pontiff). Splits the common sample into
+    halves and reports alpha/beta for each.
+    """
+    joined = pd.DataFrame({
+        'strategy': strategy_df['Equity'],
+        'benchmark': benchmark_df['Equity'],
+    }).dropna()
+    if len(joined) < 40:
+        return []
+
+    mid = len(joined) // 2
+    halves = []
+    for label, chunk in (("first half", joined.iloc[:mid]),
+                         ("second half", joined.iloc[mid:])):
+        stats = alpha_beta(chunk[['strategy']].rename(columns={'strategy': 'Equity'}),
+                           chunk[['benchmark']].rename(columns={'benchmark': 'Equity'}))
+        halves.append({
+            'label': label,
+            'start': str(chunk.index[0].date()),
+            'end': str(chunk.index[-1].date()),
+            **stats,
+        })
+    return halves
 
 
 def comparison_table(strategy_df: pd.DataFrame, benchmark_df: pd.DataFrame,
